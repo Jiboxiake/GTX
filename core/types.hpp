@@ -27,7 +27,7 @@ namespace bwgraph
         NEW_VERTEX // for creating a new vertex
     };
 
-    enum class EdgeDeltaType:int64_t{
+    enum class EdgeDeltaType:uint16_t{
         BASE, //for consolidated edge entries
         INSERT_DELTA,//for new edges
         DELETE_DELTA,//for deleting an edge
