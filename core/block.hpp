@@ -220,11 +220,22 @@ constexpr uint64_t in_place_size = 22;
         //std::atomic_bool valid;
         char data[in_place_size];//initial data entry, if the data is small leq than 16 bytes, it will be stored at the initial location, otherwise columnar store
     };
+    /*
+     * specialized edge deltas for long running analytical threads
+     */
+   /* class PreviousVersionDelta{
+
+        vertex_t toID;
+        uint64_t creation_ts;
+        uint64_t invalidation_ts;
+        uint32_t data_offset;
+        uint32_t data_length;
+    };*/
     static_assert(sizeof(SimpleEdgeDelta)==32);
     static_assert(sizeof(BaseEdgeDelta) == 64);
     class SimpleEdgeDeltaBlockHeader{
     public:
-        inline static uint16_t get_delta_offset_from_combined_offset(uint64_t input_offset) {
+        inline static uint16_t get_delta_offset_from_combined_offset(uint32_t input_offset) {
             return static_cast<uint16_t>(input_offset & SMALL_SIZE2MASK);
         }
         //metadata accessor:
@@ -247,8 +258,12 @@ constexpr uint64_t in_place_size = 22;
         inline uint32_t get_current_offset() {
             return combined_offsets.load(std::memory_order_acquire);
         }
-
-        inline char *get_edge_data(uint32_t offset) {
+        inline bool is_overflow_offset(uint32_t offset){
+            uint16_t current_delta_offset = static_cast<uint16_t>(offset&SMALL_SIZE2MASK);
+            uint16_t current_data_offset = static_cast<uint16_t>(offset>>16);
+            return (current_delta_offset+current_data_offset)>size;
+        }
+        inline char *get_edge_data(uint16_t offset) {
             return get_edge_data() + offset;
         }
 
@@ -335,9 +350,19 @@ constexpr uint64_t in_place_size = 22;
             }
             return nullptr;
         }
-        inline bool is_too_old(uint16_t offset,timestamp_t txn_read_ts){
+        /*
+         * we can return true for conflict check if:
+         * 1. the last delta is inserted by us (matching txn_id)
+         * 2. the latest delta is not in progress (not txn id or empty, skip abort deltas)
+         * return true if the txn can proceed forward
+         */
+        inline bool conflict_check(uint16_t offset,timestamp_t txn_read_ts, uint64_t txn_id){
+            if(!offset)
+                return true;
             auto* current_delta = get_edge_delta(offset);
             timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+            if(original_ts==txn_id)
+                return true;
             while(original_ts==ABORT){
                 offset-=sizeof(SimpleEdgeDelta);
                 if(offset == 0){
@@ -346,7 +371,7 @@ constexpr uint64_t in_place_size = 22;
                 current_delta++;
                 original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
             }
-            return txn_read_ts<original_ts;
+            return txn_read_ts>=original_ts;
         }
         bool allocate_space_for_new_delta(uint16_t data_size, uint32_t observed_offset, uint16_t* to_return_delta_offset, uint16_t* to_return_data_offset){
             uint32_t final_offset = sizeof(SimpleEdgeDelta)+ (static_cast<uint32_t>(data_size)<<16)+observed_offset;
@@ -357,36 +382,83 @@ constexpr uint64_t in_place_size = 22;
             }
             return result;
         }
-        bool append_edge_delta(vertex_t toID, bool is_delete, uint64_t txn_id, char* input_data, uint64_t data_size, uint16_t delta_offset, uint16_t data_offset, uint16_t previous_offset){
-            if(is_delete){
-                toID |= 0x8FFFFFFFFFFFFFFF;
+        uint16_t find_previous_version_offset(uint16_t start_offset,vertex_t dst, uint64_t invalidation_ts){
+            auto current_delta = get_edge_delta(start_offset);
+            while(start_offset>0){
+                if(current_delta->toID==dst){
+                    current_delta->invalidate_ts.store(invalidation_ts,std::memory_order_release);
+                    return start_offset;
+                }
+                current_delta++;
+                start_offset-=sizeof(SimpleEdgeDelta);
             }
+            return start_offset;
+        }
+        uint16_t find_previous_version_offset(uint16_t start_offset,vertex_t dst){
+            auto current_delta = get_edge_delta(start_offset);
+            while(start_offset>0){
+                if(current_delta->toID==dst){
+                    return start_offset;
+                }
+                current_delta++;
+                start_offset-=sizeof(SimpleEdgeDelta);
+            }
+            return start_offset;
+        }
+        void append_edge_delta(vertex_t toID, bool is_delete, uint64_t txn_id, const char* input_data, uint64_t data_size, uint16_t delta_offset, uint16_t data_offset, uint16_t previous_offset){
             SimpleEdgeDelta* new_delta = get_edge_delta(delta_offset);
             new_delta->toID = toID;
             new_delta->data_offset = data_offset;
             new_delta->data_length = data_size;
-            bool result;
+            //bool result;
             if(is_delete){
                 new_delta->previous_offset = previous_offset;//must exist
                 new_delta->simple_delta_type = EdgeDeltaType::DELETE_DELTA;
-                result = true;
+                new_delta->creation_ts.store(txn_id,std::memory_order_release);
+                return;
+               // result = true;
             }else{
                 if(previous_offset){
                     new_delta->previous_offset = previous_offset;
                     new_delta->simple_delta_type = EdgeDeltaType::UPDATE_DELTA;
-                    result = false;
+                   // result = false;
                 }else{
                     new_delta->simple_delta_type = EdgeDeltaType::INSERT_DELTA;
-                    result = true;
+                  //  result = true;
                 }
             }
+            new_delta->creation_ts.store(txn_id,std::memory_order_release);
             if(data_size){
                 char* delta_data = get_edge_data(data_offset);
                 for(uint64_t i=0; i<data_size; i++){
                     delta_data[i] = input_data[i];
                 }
             }
-            return result;
+           // return result;
+        }
+        void append_edge_delta(vertex_t toID, uint64_t creation_ts, uint64_t invalidation_ts, const char* input_data, uint64_t data_size, uint16_t delta_offset, uint16_t data_offset, uint16_t previous_offset){
+            SimpleEdgeDelta* new_delta = get_edge_delta(delta_offset);
+            new_delta->toID = toID;
+            new_delta->data_offset = data_offset;
+            new_delta->data_length = data_size;
+            //bool result;
+            if(previous_offset){
+                new_delta->previous_offset = previous_offset;
+                new_delta->simple_delta_type = EdgeDeltaType::UPDATE_DELTA;
+                // result = false;
+            }else{
+                new_delta->simple_delta_type = EdgeDeltaType::INSERT_DELTA;
+                //  result = true;
+            }
+            new_delta->invalidate_ts.store(invalidation_ts,std::memory_order_release);
+            new_delta->creation_ts.store(creation_ts,std::memory_order_release);
+            if(data_size){
+                char* delta_data = get_edge_data(data_offset);
+                for(uint64_t i=0; i<data_size; i++){
+                    delta_data[i] = input_data[i];
+                }
+            }
+            // return result;
         }
     private:
         std::atomic_uint32_t combined_offsets;
@@ -474,8 +546,25 @@ constexpr uint64_t in_place_size = 22;
                                                                                                             DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
             txn_tables = txn_table_ptr;
             delta_chains_index = input_index_ptr;
+            previous_version_simple = false;
         }
-
+        inline void
+        fill_metadata(vertex_t input_owner_id, timestamp_t input_creation_time, timestamp_t input_consolidation_time,
+                      uintptr_t input_prev_pointer,
+                      order_t input_order, TxnTables *txn_table_ptr, std::vector<AtomicDeltaOffset> *input_index_ptr, bool is_simple) {
+            owner_id = input_owner_id;
+            creation_time = input_creation_time;
+            consolidation_time = input_consolidation_time;
+            prev_pointer = input_prev_pointer;
+            order = input_order;
+            //define a function that determines how many delta chains it has:
+            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 1 -
+                                                                                                            DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
+            txn_tables = txn_table_ptr;
+            delta_chains_index = input_index_ptr;
+            previous_version_simple = false;
+            previous_version_simple = is_simple;
+        }
         //get a specific delta
         BaseEdgeDelta *get_edge_delta(uint32_t entry_offset) {
 #if EDGE_DELTA_TEST
@@ -1565,7 +1654,7 @@ constexpr uint64_t in_place_size = 22;
             }
             return {EdgeDeltaInstallResult::SUCCESS, newEntryOffset};
         }
-
+        inline bool is_previous_simple(){return previous_version_simple;}
     private:
         vertex_t owner_id;
         std::atomic_uint64_t combined_offsets;
@@ -1577,7 +1666,8 @@ constexpr uint64_t in_place_size = 22;
         timestamp_t consolidation_time;
         int32_t delta_chain_num;
         order_t order;
-        char padding[3];//todo check whether this is actually needed
+        bool previous_version_simple = false;
+        char padding[2];//todo check whether this is actually needed
         char data[0];
     };
 

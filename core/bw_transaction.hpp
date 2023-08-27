@@ -15,8 +15,8 @@
 #include "edge_delta_block_state_protection.hpp"
 #include <set>
 namespace bwgraph{
-#define CONSOLIDATION_TEST false
-#define TXN_TEST false
+#define CONSOLIDATION_TEST true
+#define TXN_TEST true
     struct LockOffsetCache{
         LockOffsetCache(uint64_t input_version, int32_t input_size):block_version_num(input_version),delta_chain_num(input_size){}
         ~LockOffsetCache() = default;
@@ -517,6 +517,7 @@ namespace bwgraph{
         //handle the scenario that block becomes overflow
         void consolidation(BwLabelEntry* current_label_entry, EdgeDeltaBlockHeader* current_block, uint64_t block_id);
         void checked_consolidation(BwLabelEntry* current_label_entry, EdgeDeltaBlockHeader* current_block, uint64_t block_id);
+        void checked_simple_consolidation(BwLabelEntry* current_label_entry, SimpleEdgeDeltaBlockHeader* current_block, uint64_t block_id, uint16_t small_delta_offset, uint16_t small_data_offset, uint64_t data_size);
         //validation delta chain writes before commit
         bool validation();
         bool simple_validation();
@@ -635,6 +636,7 @@ namespace bwgraph{
         }
         //scan the previous block for an edge delta
         std::string_view scan_previous_block_find_edge(EdgeDeltaBlockHeader* previous_block, vertex_t vid);
+        std::string_view scan_previous_block_find_edge(SimpleEdgeDeltaBlockHeader* previous_block, vertex_t vid);
         inline void batch_lazy_updates(){
             for(auto it = lazy_update_records.begin();it!=lazy_update_records.end();it++){
                 if(it->second>0){
@@ -710,6 +712,23 @@ namespace bwgraph{
                 per_thread_garbage_queue.free_block(safe_ts);
             }
         }
+        //other eager abort
+        int64_t eager_abort(SimpleEdgeDeltaBlockHeader* current_block){
+            uint32_t current_offset = current_block->get_current_offset();
+            uint16_t current_small_delta_offset = current_block->get_delta_offset_from_combined_offset(current_offset);
+            int64_t count = 0;
+            auto current_delta = current_block->get_edge_delta(current_small_delta_offset);
+            while(current_small_delta_offset>0){
+                if(current_delta->creation_ts.load(std::memory_order_acquire)==local_txn_id){
+                    current_delta->creation_ts.store(ABORT,std::memory_order_release);
+                    count++;
+                }else{
+                    return count;
+                }
+                current_delta++;
+                current_small_delta_offset-=sizeof(SimpleEdgeDelta);
+            }
+        }
         //txn local fields
         BwGraph& graph;
         const uint64_t local_txn_id;
@@ -730,6 +749,7 @@ namespace bwgraph{
         std::unordered_set<vertex_t> updated_vertices;//cache the vertex deltas that the transaction has touched
         std::queue<vertex_t>& thread_local_recycled_vertices;
         std::unordered_set<vertex_t> created_vertices;
+        std::unordered_set<uint64_t> updated_simple_edge_delta_blocks;
 #if TRACK_EXECUTION_TIME
         std::chrono::time_point<std::chrono::high_resolution_clock> txn_start_time;
 #endif

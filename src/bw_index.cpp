@@ -70,9 +70,9 @@ namespace bwgraph{
                 if(current_label_block->offset.compare_exchange_strong(current_offset,new_offset, std::memory_order_acq_rel)){
                     current_label_block->label_entries[current_offset].label = target_label;
                     //todo:: now we are testing using large blocks Libin:reversed
-                    current_label_block->label_entries[current_offset].block_ptr = block_manager->alloc(DEFAULT_EDGE_DELTA_BLOCK_ORDER);
-                    auto new_edge_delta_block = block_manager->convert<EdgeDeltaBlockHeader>(current_label_block->label_entries[current_offset].block_ptr);
-                    current_label_block->label_entries[current_offset].delta_chain_index = new std::vector<AtomicDeltaOffset>();
+                    current_label_block->label_entries[current_offset].block_ptr = block_manager->alloc(DEFAULT_EDGE_DELTA_BLOCK_ORDER-1);
+                    auto new_edge_delta_block = block_manager->convert<SimpleEdgeDeltaBlockHeader>(current_label_block->label_entries[current_offset].block_ptr);
+
                     //todo::debug
                   /*  if(new_edge_delta_block->get_current_offset()!=0){
                         std::cout<<"owner id is "<<new_edge_delta_block->get_owner_id()<<" creation ts is "<<new_edge_delta_block->get_creation_time()<<" order is "<<static_cast<int32_t>(new_edge_delta_block->get_order())<<" previous ptr is "<<new_edge_delta_block->get_previous_ptr()<<" delta chain num is "<<new_edge_delta_block->get_delta_chain_num()<<std::endl;
@@ -82,12 +82,11 @@ namespace bwgraph{
                     }*/
                     //todo:: now we are testing using large blocks Libin:reversed
                     //new_edge_delta_block->fill_metadata(owner_id,txn_read_ts,0,24,txn_tables,current_label_block->label_entries[current_offset].delta_chain_index);
-                    new_edge_delta_block->fill_metadata(owner_id,txn_read_ts, txn_read_ts, 0,DEFAULT_EDGE_DELTA_BLOCK_ORDER,txn_tables,current_label_block->label_entries[current_offset].delta_chain_index);
+                    new_edge_delta_block->fill_metadata(txn_read_ts,txn_read_ts,0,DEFAULT_EDGE_DELTA_BLOCK_ORDER-1,txn_tables);
                     //todo::debug
-                    if(new_edge_delta_block->get_current_offset()!=0){
+                  /*  if(new_edge_delta_block->get_current_offset()!=0){
                         throw std::runtime_error("bad block allocation after");
-                    }
-                    current_label_block->label_entries[current_offset].delta_chain_index->resize(new_edge_delta_block->get_delta_chain_num());
+                    }*/
                     current_label_block->label_entries[current_offset].state.store(EdgeDeltaBlockState::NORMAL,std::memory_order_release);
                     current_label_block->label_entries[current_offset].block_version_number.store(0,std::memory_order_release);
                     current_label_block->label_entries[current_offset].valid.store(true,std::memory_order_release);
@@ -106,11 +105,11 @@ namespace bwgraph{
                     new_block->block_manager = block_manager;
                     new_block->label_entries[0].label = target_label;
                     //todo:: allocate a block as well maybe?
-                    new_block->label_entries[0].block_ptr =block_manager->alloc(DEFAULT_EDGE_DELTA_BLOCK_ORDER);
-                    auto new_edge_delta_block = block_manager->convert<EdgeDeltaBlockHeader>(new_block->label_entries[0].block_ptr);
-                    new_block->label_entries[0].delta_chain_index = new std::vector<AtomicDeltaOffset>();
-                    new_edge_delta_block->fill_metadata(owner_id,txn_read_ts, txn_read_ts, 0,DEFAULT_EDGE_DELTA_BLOCK_ORDER,txn_tables,new_block->label_entries[0].delta_chain_index);
-                    new_block->label_entries[0].delta_chain_index->resize(new_edge_delta_block->get_delta_chain_num());
+                    new_block->label_entries[0].block_ptr =block_manager->alloc(DEFAULT_EDGE_DELTA_BLOCK_ORDER-1);
+                    auto new_edge_delta_block = block_manager->convert<SimpleEdgeDeltaBlockHeader>(new_block->label_entries[0].block_ptr);
+                   // new_block->label_entries[0].delta_chain_index = new std::vector<AtomicDeltaOffset>();
+                    new_edge_delta_block->fill_metadata(txn_read_ts,txn_read_ts,0,DEFAULT_EDGE_DELTA_BLOCK_ORDER-1,txn_tables);
+                   // new_block->label_entries[0].delta_chain_index->resize(new_edge_delta_block->get_delta_chain_num());
                     new_block->label_entries[0].state.store(EdgeDeltaBlockState::NORMAL,std::memory_order_release);
                     new_block->label_entries[0].block_version_number.store(0,std::memory_order_release);
                     new_block->label_entries[0].valid.store(true,std::memory_order_release);
@@ -120,8 +119,8 @@ namespace bwgraph{
                         //deallocate failed installation
                         delete new_block->label_entries[0].delta_chain_index;
                         auto zero_out_ptr = block_manager->convert<uint8_t>(new_block->label_entries[0].block_ptr);
-                        memset(zero_out_ptr,'\0',1ul<<DEFAULT_EDGE_DELTA_BLOCK_ORDER);
-                        block_manager->free(new_block->label_entries[0].block_ptr,DEFAULT_EDGE_DELTA_BLOCK_ORDER);
+                        memset(zero_out_ptr,'\0',1ul<<(DEFAULT_EDGE_DELTA_BLOCK_ORDER-1));
+                        block_manager->free(new_block->label_entries[0].block_ptr,(DEFAULT_EDGE_DELTA_BLOCK_ORDER-1));
                         zero_out_ptr = block_manager->convert<uint8_t>(new_next_ptr);
                         memset(zero_out_ptr,'\0',1ul<<new_order);
                         block_manager->free(new_next_ptr,new_order);

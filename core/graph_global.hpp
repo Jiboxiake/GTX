@@ -37,6 +37,7 @@ constexpr uint64_t shared_txn_op_threshold = 64;
 constexpr uint64_t eager_blocks_clean_threshold = 4096; //after how many new version creation, we need to do eager clean
 constexpr uint64_t cold_spot_threshold = 256;
 constexpr uint8_t index_lookup_order_threshold = 12;
+constexpr uint64_t edge_block_hotspot_threshold = 1ul<<20;
 //constexpr uint64_t max_writer_num = 40;
 #define COMMIT_TEST false
 #define TRACK_EXECUTION_TIME false
@@ -51,4 +52,5 @@ constexpr uint8_t index_lookup_order_threshold = 12;
 #define USING_QUEUE_PREVIOUS_VERSION true
 #define TRACK_COMMIT_ABORT false
 #define TRACK_GARBAGE_RECORD_TIME false
+
 //#endif //BWGRAPH_V2_GRAPH_GLOBAL_HPP
