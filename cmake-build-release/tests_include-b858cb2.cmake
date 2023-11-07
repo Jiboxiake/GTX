@@ -1,5 +1,5 @@
-if(EXISTS "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release/tests_tests-b858cb2.cmake")
-  include("/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release/tests_tests-b858cb2.cmake")
+if(EXISTS "/home/zhou822/BwGraph_Hybrid_Store/cmake-build-release/tests_tests-b858cb2.cmake")
+  include("/home/zhou822/BwGraph_Hybrid_Store/cmake-build-release/tests_tests-b858cb2.cmake")
 else()
   add_test(tests_NOT_BUILT-b858cb2 tests_NOT_BUILT-b858cb2)
 endif()

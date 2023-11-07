@@ -106,7 +106,32 @@ namespace bwgraph {
         bool flag;
         std::atomic_uint32_t offset;
     };
-
+    /*
+     * 32 bytes light edge delta
+     */
+    class LightEdgeDelta{
+    public:
+        LightEdgeDelta &operator=(const LightEdgeDelta& other){
+            toID = other.toID;
+            creation_ts = other.creation_ts;
+            invalidate_ts.store(other.invalidate_ts.load(std::memory_order_acquire),std::memory_order_release);
+            data_length = other.data_length;
+            data_offset = other.data_offset;
+            return *this;
+        }
+        LightEdgeDelta(const LightEdgeDelta& other){
+            toID = other.toID;
+            creation_ts = other.creation_ts;
+            invalidate_ts.store(other.invalidate_ts.load(std::memory_order_acquire),std::memory_order_release);
+            data_length = other.data_length;
+            data_offset = other.data_offset;
+        }
+        vertex_t toID;
+        timestamp_t creation_ts;
+        std::atomic_uint64_t invalidate_ts;//todo: think a bit more about whether it needs to be atomic
+        uint32_t data_length;
+        uint32_t data_offset;
+    };
     class /*alignas(64)*/ BaseEdgeDelta {
     public:
         BaseEdgeDelta &operator=(const BaseEdgeDelta &other) {
@@ -183,9 +208,9 @@ namespace bwgraph {
             return static_cast<uint32_t>(input_offset & SIZE2MASK);
         }
 
-        inline vertex_t get_owner_id() {
+       /* inline vertex_t get_owner_id() {
             return owner_id;
-        }
+        }*/
 
         //metadata accessor:
         inline timestamp_t get_creation_time() {
@@ -243,7 +268,7 @@ namespace bwgraph {
         fill_metadata(vertex_t input_owner_id, timestamp_t input_creation_time, timestamp_t input_consolidation_time,
                       uintptr_t input_prev_pointer,
                       order_t input_order, TxnTables *txn_table_ptr, std::vector<AtomicDeltaOffset> *input_index_ptr) {
-            owner_id = input_owner_id;
+            //owner_id = input_owner_id;
             creation_time = input_creation_time;
             consolidation_time = input_consolidation_time;
             prev_pointer = input_prev_pointer;
@@ -1043,7 +1068,7 @@ namespace bwgraph {
         void print_metadata() {
             std::cout << "order is " << static_cast<uint32_t>(order) << std::endl;
             std::cout << "creation time is " << creation_time << std::endl;
-            std::cout << "owner id is " << owner_id << std::endl;
+            //std::cout << "owner id is " << owner_id << std::endl;
             std::cout << "current offset is " << combined_offsets.load() << std::endl;
             std::cout << "previous address is " << prev_pointer << std::endl;
         }
@@ -1434,7 +1459,7 @@ namespace bwgraph {
         }
 
     private:
-        vertex_t owner_id;
+        //vertex_t owner_id;
         std::atomic_uint64_t combined_offsets;
         timestamp_t creation_time;
         uintptr_t prev_pointer;
@@ -1443,8 +1468,9 @@ namespace bwgraph {
         TxnTables *txn_tables;
         timestamp_t consolidation_time;
         int32_t delta_chain_num;
+        uint32_t latest_version_entries_num;
         order_t order;
-        char padding[3];//todo check whether this is actually needed
+        char padding[7];//todo check whether this is actually needed
         char data[0];
     };
 

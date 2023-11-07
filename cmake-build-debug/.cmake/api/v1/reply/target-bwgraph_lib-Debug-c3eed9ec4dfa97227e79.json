@@ -43,7 +43,7 @@
 			"compileCommandFragments" : 
 			[
 				{
-					"fragment" : "-ltbb -std=c++20 -g -fno-omit-frame-pointer -Wall -Wextra -Wnon-virtual-dtor -pedantic -Wconversion -Wlogical-op -O3 -DNDEBUG -fPIC -fdiagnostics-color=always"
+					"fragment" : "-ltbb -std=c++20 -g -fno-omit-frame-pointer -Wall -Wextra -Wnon-virtual-dtor -pedantic -Wconversion -Wlogical-op -fPIC -fdiagnostics-color=always"
 				},
 				{
 					"fragment" : "-std=gnu++20"
@@ -53,7 +53,7 @@
 			[
 				{
 					"backtrace" : 2,
-					"path" : "/home/zhou822/BwGraph_Mono_Simple_Iterator"
+					"path" : "/home/zhou822/BwGraph_Hybrid_Store"
 				}
 			],
 			"language" : "CXX",
