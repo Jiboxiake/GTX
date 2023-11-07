@@ -11,7 +11,7 @@
 						1
 					],
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-.-Debug-9020aaf60ada989a759c.json",
+					"jsonFile" : "directory-.-Release-9020aaf60ada989a759c.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.24"
@@ -29,7 +29,7 @@
 				{
 					"build" : "doctest",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-doctest-Debug-f2e967e9101ae39ebb5d.json",
+					"jsonFile" : "directory-doctest-Release-e4ab036544888ead15d7.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.0"
@@ -43,7 +43,7 @@
 					]
 				}
 			],
-			"name" : "Debug",
+			"name" : "Release",
 			"projects" : 
 			[
 				{
@@ -82,35 +82,35 @@
 				{
 					"directoryIndex" : 0,
 					"id" : "bwgraph::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-bwgraph-Debug-f42e8597b5b64a94a22d.json",
+					"jsonFile" : "target-bwgraph-Release-f9c35d723f3a8cf7c13f.json",
 					"name" : "bwgraph",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "bwgraph_lib::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-bwgraph_lib-Debug-eb2c93c83fbf6f4c86cc.json",
+					"jsonFile" : "target-bwgraph_lib-Release-0b80f3c9dc115b0b9d7a.json",
 					"name" : "bwgraph_lib",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 1,
 					"id" : "doctest_with_main::@a160a721d7986f0420d1",
-					"jsonFile" : "target-doctest_with_main-Debug-9549be7d1a9887d498b5.json",
+					"jsonFile" : "target-doctest_with_main-Release-457388d69c03aae9077b.json",
 					"name" : "doctest_with_main",
 					"projectIndex" : 1
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "parallel_hashmap_lib::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-parallel_hashmap_lib-Debug-ae4677cf005d30b2e74c.json",
+					"jsonFile" : "target-parallel_hashmap_lib-Release-12cf2d6c882c0dfbc920.json",
 					"name" : "parallel_hashmap_lib",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "tests::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-tests-Debug-9764ccb5818166cb7498.json",
+					"jsonFile" : "target-tests-Release-bee6605e29adcadd2f17.json",
 					"name" : "tests",
 					"projectIndex" : 0
 				}
@@ -120,8 +120,8 @@
 	"kind" : "codemodel",
 	"paths" : 
 	{
-		"build" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-debug",
-		"source" : "/home/zhou822/BwGraph_Mono_Simple_Iterator"
+		"build" : "/home/zhou822/BwGraph_Distance_Oracle/cmake-build-release",
+		"source" : "/home/zhou822/BwGraph_Distance_Oracle"
 	},
 	"version" : 
 	{

@@ -107,6 +107,9 @@ namespace bwgraph {
         std::atomic_uint32_t offset;
     };
 
+    /*
+    * specifically modified to support road network edges, and edge weight updates (Update Efficient setting)
+    */
     class /*alignas(64)*/ BaseEdgeDelta {
     public:
         BaseEdgeDelta &operator=(const BaseEdgeDelta &other) {

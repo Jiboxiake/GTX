@@ -75,7 +75,7 @@
 			"compileCommandFragments" : 
 			[
 				{
-					"fragment" : "-ltbb -std=c++20 -g -fno-omit-frame-pointer -Wall -Wextra -Wnon-virtual-dtor -pedantic -Wconversion -Wlogical-op -O3 -DNDEBUG -fPIC -fdiagnostics-color=always"
+					"fragment" : "-ltbb -std=c++20 -g -fno-omit-frame-pointer -Wall -Wextra -Wnon-virtual-dtor -pedantic -Wconversion -Wlogical-op -fPIC -fdiagnostics-color=always"
 				},
 				{
 					"backtrace" : 3,
@@ -95,7 +95,7 @@
 			[
 				{
 					"backtrace" : 7,
-					"path" : "/home/zhou822/BwGraph_Mono_Simple_Iterator"
+					"path" : "/home/zhou822/BwGraph_Distance_Oracle"
 				},
 				{
 					"backtrace" : 3,
@@ -171,7 +171,7 @@
 			},
 			{
 				"backtrace" : 3,
-				"fragment" : "/opt/intel/oneapi/tbb/2021.9.0/lib/intel64/gcc4.8/libtbb.so.12",
+				"fragment" : "/opt/intel/oneapi/tbb/2021.9.0/lib/intel64/gcc4.8/libtbb_debug.so.12",
 				"role" : "libraries"
 			},
 			{

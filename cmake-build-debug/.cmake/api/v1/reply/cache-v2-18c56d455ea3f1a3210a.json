@@ -23,7 +23,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle/cmake-build-debug"
 		},
 		{
 			"name" : "BwGraph_v2_IS_TOP_LEVEL",
@@ -47,7 +47,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle"
 		},
 		{
 			"name" : "CMAKE_ADDR2LINE",
@@ -91,7 +91,7 @@
 				}
 			],
 			"type" : "STRING",
-			"value" : "Release"
+			"value" : "Debug"
 		},
 		{
 			"name" : "CMAKE_CACHEFILE_DIR",
@@ -103,7 +103,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle/cmake-build-debug"
 		},
 		{
 			"name" : "CMAKE_CACHE_MAJOR_VERSION",
@@ -175,7 +175,7 @@
 				}
 			],
 			"type" : "STRING",
-			"value" : "-j130"
+			"value" : "-j152"
 		},
 		{
 			"name" : "CMAKE_COLOR_DIAGNOSTICS",
@@ -675,7 +675,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release/CMakeFiles/pkgRedirects"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle/cmake-build-debug/CMakeFiles/pkgRedirects"
 		},
 		{
 			"name" : "CMAKE_GENERATOR",
@@ -747,7 +747,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle"
 		},
 		{
 			"name" : "CMAKE_INSTALL_BINDIR",
@@ -1931,7 +1931,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/cmake-build-release/doctest"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle/cmake-build-debug/doctest"
 		},
 		{
 			"name" : "doctest_IS_TOP_LEVEL",
@@ -1955,7 +1955,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/zhou822/BwGraph_Mono_Simple_Iterator/doctest"
+			"value" : "/home/zhou822/BwGraph_Distance_Oracle/doctest"
 		}
 	],
 	"kind" : "cache",
