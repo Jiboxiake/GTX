@@ -382,6 +382,18 @@ namespace bwgraph {
             }
             return nullptr;
         }
+
+        /*
+         * get target property/data using scan, or return empty string view if no exist
+         */
+        std::string_view get_edge_data_using_scan(uint32_t offset, vertex_t dst, uint64_t txn_read_ts,
+                                                  std::unordered_map<uint64_t, int32_t> &lazy_update_records,
+                                                  uint64_t txn_id){
+            BaseEdgeDelta* current_delta;
+            LightEdgeDelta* current_light_delta;
+
+        }
+
         /*
          * used when the delta count is small, for ro transaction
          */
@@ -1321,6 +1333,7 @@ namespace bwgraph {
                         auto current_light_delta = get_light_edge_delta(start_offset);
                         while(start_offset>0){
                             if(current_light_delta->toID==vid){
+                                current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                                 return start_offset;
                             }
                             current_light_delta++;
@@ -1336,6 +1349,7 @@ namespace bwgraph {
                             uint32_t mid = left + (right - left)/2;
                             if(light_deltas_array[mid].toID==vid){
                                 //found
+                                light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
                                 return (latest_version_start_offset-mid*LIGHT_DELTA_SIZE);
                             }
                             if(light_deltas_array[mid].toID<vid){
@@ -1620,6 +1634,7 @@ namespace bwgraph {
             current_delta->toID = toID;
             current_delta->creation_ts = creation_ts;
             current_delta->data_offset = originalDataOffset;
+            current_delta->data_length = data_size;
             for (uint32_t i = 0; i < data_size; i++) {
                 (get_edge_data(originalDataOffset))[i] = edge_data[i];
             }
