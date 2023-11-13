@@ -15,7 +15,7 @@
 #include "edge_delta_block_state_protection.hpp"
 #include <set>
 namespace bwgraph{
-#define CONSOLIDATION_TEST false
+#define CONSOLIDATION_TEST true
 #define TXN_TEST false
     struct LockOffsetCache{
         LockOffsetCache(uint64_t input_version, int32_t input_size):block_version_num(input_version),delta_chain_num(input_size){}
@@ -29,8 +29,8 @@ namespace bwgraph{
 
 #if PESSIMISTIC_DELTA_BLOCK
         /*
-         * invoked under pessimistic mode after the state protection is grabbed.
          * Reclaim the locks according to the new block delta chain structure. Return false upon conflict
+         * But should not be used, it is not efficient enough
          */
         bool reclaim_delta_chain_lock(EdgeDeltaBlockHeader* current_block, BwLabelEntry* current_label_entry, uint64_t txn_id, uint64_t txn_read_ts, uint64_t current_block_offset){
             delta_chain_num = current_block->get_delta_chain_num();//todo: check if we can update delta chain num directly in place
@@ -46,6 +46,7 @@ namespace bwgraph{
             reconstruct_offsets(current_block,txn_id,current_block_offset);
             std::set<delta_chain_id_t> already_reclaimed_locks;
             bool to_abort = false;
+            uint32_t latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
             for(auto it = to_reclaim_locks.begin();it!=to_reclaim_locks.end();it++){
                 bool lock_result = current_block->try_set_protection_on_delta_chain(*it);
                 if(lock_result){
@@ -53,22 +54,36 @@ namespace bwgraph{
                     auto& delta_chain_index_entry = current_label_entry->delta_chain_index->at(*it);
                     uint32_t current_delta_chain_head_offset = delta_chain_index_entry.get_raw_offset();
                     if(current_delta_chain_head_offset){
-                        BaseEdgeDelta* current_delta_chain_head = current_block->get_edge_delta(current_delta_chain_head_offset);
+                        //hybrid storage: need to distinguish normal vs. light deltas
+                        if(current_delta_chain_head_offset>latest_version_start_offset){
+                            BaseEdgeDelta* current_delta_chain_head = current_block->get_edge_delta(current_delta_chain_head_offset);
 #if EDGE_DELTA_TEST
-                        if(!current_delta_chain_head->valid.load(std::memory_order_acquire)){
-                            throw DeltaChainCorruptionException();
-                        }
+                            if(current_delta_chain_head->creation_ts.load(std::memory_order_acquire)==0){
+                                throw DeltaChainCorruptionException();
+                            }
 #endif//endif EDGE_DELTA_TEST
-                        uint64_t current_delta_chain_head_ts = current_delta_chain_head->creation_ts.load(std::memory_order_acquire);
-                        //because lock and offset are bind together
+                            uint64_t current_delta_chain_head_ts = current_delta_chain_head->creation_ts.load(std::memory_order_acquire);
+                            //because lock and offset are bind together
 #if EDGE_DELTA_TEST
-                        if(is_txn_id(current_delta_chain_head_ts)||current_delta_chain_head_ts==ABORT){
-                            throw LazyUpdateException();//how can we have the lock while the delta chain head is in-progress?
-                        }
+                            if(is_txn_id(current_delta_chain_head_ts)||current_delta_chain_head_ts==ABORT){
+                                throw LazyUpdateException();//how can we have the lock while the delta chain head is in-progress?
+                            }
 #endif//endif EDGE_DELTA_TEST
-                        if(current_delta_chain_head_ts>txn_read_ts){
-                            to_abort=true;
-                            break;
+                            if(current_delta_chain_head_ts>txn_read_ts){
+                                to_abort=true;
+                                break;
+                            }
+                        }else{
+                            LightEdgeDelta* current_delta_chain_head = current_block->get_light_edge_delta(current_delta_chain_head_offset);
+#if EDGE_DELTA_TEST
+                            if(current_delta_chain_head->creation_ts==0|| is_txn_id(current_delta_chain_head->creation_ts)||current_delta_chain_head->creation_ts==ABORT){
+                                throw DeltaChainCorruptionException();
+                            }
+#endif//endif EDGE_DELTA_TEST
+                            if(current_delta_chain_head->creation_ts>txn_read_ts){
+                                to_abort=true;
+                                break;
+                            }
                         }
                     }
                 }else{
@@ -86,7 +101,11 @@ namespace bwgraph{
             //reconstruct offsets
             return true;
         }
-        //for simple protocol
+
+        /*
+         * Reclaim the locks according to the new block delta chain structure. Return false upon conflict
+         * For Simple Protocol
+         */
         bool reclaim_delta_chain_lock(EdgeDeltaBlockHeader* current_block, BwLabelEntry* current_label_entry, uint64_t txn_id, uint64_t txn_read_ts, uint64_t current_block_offset, lazy_update_map* lazy_update_records){
             delta_chain_num = current_block->get_delta_chain_num();//todo: check if we can update delta chain num directly in place
             block_version_num = current_label_entry->block_version_number.load(std::memory_order_acquire);
@@ -130,21 +149,32 @@ namespace bwgraph{
             return true;
         }
         //reconstruct all private transaction delta chain heads: assume we already computed which delta chains need to be reclaimed, delta chain num is also updated
+        //Note that we should still be able to reconstruct all offsets
         void reconstruct_offsets(EdgeDeltaBlockHeader* current_block, uint64_t txn_id, uint64_t current_block_offset){
             size_t delta_chains_to_reclaim_num = already_updated_delta_chain_head_offsets.size();//the total number of delta chains we want to reclaim
             std::unordered_set<delta_chain_id_t>settled_delta_chains(delta_chains_to_reclaim_num);
             uint32_t current_delta_offset = EdgeDeltaBlockHeader::get_delta_offset_from_combined_offset(current_block_offset);
             auto current_delta = current_block->get_edge_delta(current_delta_offset);
+#if EDGE_DELTA_TEST
+            uint32_t latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
+#endif
             while(settled_delta_chains.size()<delta_chains_to_reclaim_num){
-                if(current_delta_offset==0){
+#if EDGE_DELTA_TEST
+                /*if(current_delta_offset==0)[[unlikely]]{
+                    throw DeltaChainReclaimException();
+                }*/
+                if(current_delta_offset<=latest_version_start_offset)[[unlikely]]{//should never reach this far in search
                     throw DeltaChainReclaimException();
                 }
+#endif
                 timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
-                if(!original_ts){
+                //invalid deltas, skip
+                /*if(!original_ts){
                     current_delta++;
                     current_delta_offset-=ENTRY_DELTA_SIZE;
                     continue;
-                }
+                }*/
+                //found my deltas, my txn_id cannot be 0
                 if(original_ts==txn_id){
                     delta_chain_id_t delta_chain_id = calculate_owner_delta_chain_id(current_delta->toID,delta_chain_num);
                     auto emplace_result = settled_delta_chains.emplace(delta_chain_id);
@@ -220,29 +250,37 @@ namespace bwgraph{
         }
         /*
          * function invoked only after protection is grabbed and offset is not overflowing
+         * locks are released before this function is called
          * when possible, use the cached offset to abort. If timestamps are different, use scan to abort.
          */
         int64_t eager_abort(EdgeDeltaBlockHeader* current_block, BwLabelEntry* current_label_entry, uint64_t txn_id,uint64_t current_block_offset){
             int64_t total_abort_count=0;
             //use offset cache to eager abort
             //I have locks must release
+            uint32_t latest_version_start_offset = LIGHT_DELTA_SIZE*current_block->latest_version_delta_num();
             if(current_label_entry->block_version_number.load(std::memory_order_acquire)==block_version_num){
+                //double check if we will ever get a zero?
                 for(auto it = already_updated_delta_chain_head_offsets.begin();it!=already_updated_delta_chain_head_offsets.end();it++){
 #if EDGE_DELTA_TEST
                     if(!it->second){
                        //throw ConsolidationException();
-                       continue;
+                       continue;//todo: check which one to pick
                     }
 #endif
                     uint32_t current_delta_offset = it->second;
+                    //can we guarantee that this is always BaseEdgeDelta
                     auto current_delta = current_block->get_edge_delta(current_delta_offset);
+
                     while(current_delta_offset>0){
+                        if(current_delta_offset<=latest_version_start_offset){
+                            break;
+                        }
 #if EDGE_DELTA_TEST
-                        if(!current_delta->valid.load(std::memory_order_acquire)){
+                        if(current_delta->creation_ts.load(std::memory_order_acquire)==0){
                             throw DeltaChainCorruptionException();
                         }
 #endif
-                        if(current_delta->creation_ts.load(std::memory_order_acquire)==txn_id){
+                        if(current_delta->creation_ts.load(std::memory_order_acquire)==txn_id){//my delta
 #if EDGE_DELTA_TEST
                             current_delta->eager_abort(txn_id);
 #else
@@ -264,14 +302,18 @@ namespace bwgraph{
             }else{//use scan to abort; I have no locks
                 uint32_t current_delta_offset = EdgeDeltaBlockHeader::get_delta_offset_from_combined_offset(current_block_offset);
                 auto current_delta = current_block->get_edge_delta(current_delta_offset);
-                while(current_delta_offset>0){
+                //scan all normal deltas
+                while(current_delta_offset>latest_version_start_offset){
+                   /* if(current_delta_offset<=latest_version_start_offset){
+                        break;
+                    }*/
                     auto original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
-                    if(!original_ts){
+                    /*if(!original_ts){
                         current_delta++;
                         current_delta_offset-=ENTRY_DELTA_SIZE;
                         continue;
-                    }
-                    //todo:: also lazy update for others?
+                    }*/
+                    //my txn id cannot be 0
                     if(original_ts==txn_id){
 #if EDGE_DELTA_TEST
                         current_delta->eager_abort(txn_id);
@@ -705,7 +747,7 @@ namespace bwgraph{
             return ReclaimDeltaChainResult::SUCCESS;
         }
         void print_edge_delta_block_metadata(EdgeDeltaBlockHeader* current_block){
-            std::cout<<"owner id is "<<current_block->get_owner_id()<<" creation ts is "<<current_block->get_creation_time()<<" order is "<<static_cast<int32_t>(current_block->get_order())<<" previous ptr is "<<current_block->get_previous_ptr()<<" delta chain num is "<<current_block->get_delta_chain_num()<<std::endl;
+            //std::cout<<"owner id is "<<current_block->get_owner_id()<<" creation ts is "<<current_block->get_creation_time()<<" order is "<<static_cast<int32_t>(current_block->get_order())<<" previous ptr is "<<current_block->get_previous_ptr()<<" delta chain num is "<<current_block->get_delta_chain_num()<<std::endl;
         }
         inline void cache_updated_block_id_and_version(uint64_t block_id, uint64_t version_number){
             auto emplace_result = graph.to_check_blocks.local().try_emplace(block_id,version_number);

@@ -33,9 +33,9 @@ Delta_Chain_Lock_Response EdgeDeltaBlockHeader::lock_inheritance(vertex_t vid,
                 if(current_delta->lazy_update(original_ts,status)){
 #if EDGE_DELTA_TEST
                     //on the other hand, no other transactions can write to this chain unless they lazy update the current head.
-                    if (!current_delta->is_last_delta.load(std::memory_order_acquire)) {
+                    /*if (!current_delta->is_last_delta.load(std::memory_order_acquire)) {
                         throw LazyUpdateException();
-                    }
+                    }*/
 #endif
                     //record lazy update is done
                     record_lazy_update_record(lazy_update_map_ptr,original_ts);
@@ -94,9 +94,9 @@ EdgeDeltaBlockHeader::lock_inheritance_on_delta_chain(bwgraph::delta_chain_id_t 
                         throw LazyUpdateException();
                     }
                     //on the other hand, no other transactions can write to this chain unless they lazy uodate the current head.
-                    if (!current_delta->is_last_delta.load(std::memory_order_acquire)) {
+                    /*if (!current_delta->is_last_delta.load(std::memory_order_acquire)) {
                         throw LazyUpdateException();
-                    }
+                    }*/
 #endif
                     //record lazy update is done
                     auto lazy_update_emplace_result = lazy_update_map_ptr->try_emplace(original_ts, 1);

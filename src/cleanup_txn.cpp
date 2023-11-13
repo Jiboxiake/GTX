@@ -196,7 +196,7 @@ void Cleanup_Transaction::consolidation(bwgraph::BwLabelEntry *current_label_ent
     /*  if(largest_invalidation_ts){
           std::cout<<"found"<<std::endl;
       }*/
-    new_block->fill_metadata(current_block->get_owner_id(),largest_invalidation_ts, read_timestamp, current_label_entry->block_ptr,new_order, &txn_tables,current_label_entry->delta_chain_index);
+    new_block->fill_metadata(largest_invalidation_ts, read_timestamp, current_label_entry->block_ptr,new_order, &txn_tables,current_label_entry->delta_chain_index);
     int32_t new_block_delta_chain_num = new_block->get_delta_chain_num();
     std::vector<AtomicDeltaOffset> new_delta_chains_index(new_block_delta_chain_num);
     //start installing latest version
@@ -599,7 +599,7 @@ void Cleanup_Transaction::force_to_consolidation(bwgraph::BwLabelEntry *current_
     /*  if(largest_invalidation_ts){
           std::cout<<"found"<<std::endl;
       }*/
-    new_block->fill_metadata(current_block->get_owner_id(),largest_invalidation_ts, read_timestamp, current_label_entry->block_ptr,new_order, &txn_tables,current_label_entry->delta_chain_index);
+    new_block->fill_metadata(largest_invalidation_ts, read_timestamp, current_label_entry->block_ptr,new_order, &txn_tables,current_label_entry->delta_chain_index);
     int32_t new_block_delta_chain_num = new_block->get_delta_chain_num();
     std::vector<AtomicDeltaOffset> new_delta_chains_index(new_block_delta_chain_num);
     //start installing latest version

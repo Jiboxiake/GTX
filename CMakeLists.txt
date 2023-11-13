@@ -39,7 +39,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
             tests/main.cpp
             tests/bw_index.cpp
             tests/txn_tables.cpp
-            tests/bwgraph_allocation.cpp tests/checked_operation.cpp)
+            tests/bwgraph_allocation.cpp tests/checked_operation.cpp tests/hybrid_storage.cpp)
     target_link_libraries(tests bwgraph_lib doctest::doctest TBB::tbb parallel_hashmap_lib)
     #target_link_libraries(tests bwgraph_lib doctest::doctest parallel_hashmap_lib)
     enable_testing()

@@ -385,6 +385,9 @@
 		<Unit filename="/home/zhou822/BwGraph_Hybrid_Store/tests/checked_operation.cpp">
 			<Option target="tests"/>
 		</Unit>
+		<Unit filename="/home/zhou822/BwGraph_Hybrid_Store/tests/hybrid_storage.cpp">
+			<Option target="tests"/>
+		</Unit>
 		<Unit filename="/home/zhou822/BwGraph_Hybrid_Store/tests/main.cpp">
 			<Option target="tests"/>
 		</Unit>
