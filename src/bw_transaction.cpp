@@ -1302,6 +1302,8 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
  */
 std::string_view
 RWTransaction::scan_previous_block_find_edge(bwgraph::EdgeDeltaBlockHeader *previous_block, bwgraph::vertex_t vid) {
+    //todo: delete this
+    throw std::runtime_error("currently should not scan any previous block");
     uint64_t combined_offset = previous_block->get_current_offset();
     current_delta_offset = EdgeDeltaBlockHeader::get_delta_offset_from_combined_offset(combined_offset);
     BaseEdgeDelta* current_delta = previous_block->get_edge_delta(current_delta_offset);
@@ -1352,7 +1354,7 @@ RWTransaction::get_edge(bwgraph::vertex_t src, bwgraph::vertex_t dst, bwgraph::l
         //if current txn has writes in the edge delta block
         if(offset)[[unlikely]]{
             BaseEdgeDelta* target_delta;
-            if(offset<=8*ENTRY_DELTA_SIZE){
+            /*if(offset<=8*ENTRY_DELTA_SIZE){
 
                 target_delta = current_block->get_visible_target_using_scan(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
             }else{
@@ -1369,16 +1371,22 @@ RWTransaction::get_edge(bwgraph::vertex_t src, bwgraph::vertex_t dst, bwgraph::l
                 data = target_delta->data;
             }else{
                 data = current_block->get_edge_data(target_delta->data_offset);
+            }*/
+            std::string_view result;
+            if(offset<=8*ENTRY_DELTA_SIZE){
+                result = current_block->get_edge_data_using_scan(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
+            }else{
+                result = current_block->get_edge_data_using_delta_chains(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
             }
             BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
-            return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS, std::string_view(data,target_delta->data_length));
+            return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS, result);
         }else{
             //determine which block to read
             if(read_timestamp>=current_block->get_creation_time())[[likely]]{
                 auto& delta_chains_index_entry = target_label_entry->delta_chain_index->at(current_block->get_delta_chain_id(dst));
                 offset = delta_chains_index_entry.get_raw_offset();//may be locked
 
-                BaseEdgeDelta* target_delta= nullptr;
+                /*BaseEdgeDelta* target_delta= nullptr;
 
                 if(offset)[[likely]]{
                     if(offset<=8*ENTRY_DELTA_SIZE){
@@ -1401,11 +1409,20 @@ RWTransaction::get_edge(bwgraph::vertex_t src, bwgraph::vertex_t dst, bwgraph::l
                     }
 #endif
                     BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
-                    return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS, std::string_view(data,target_delta->data_length));
+                    //return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS, std::string_view(data,target_delta->data_length));
                 }else{
                     BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
                     return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS,std::string());
+                }*/
+                std::string_view result;
+                if(offset<=8*ENTRY_DELTA_SIZE){
+                    result = current_block->get_edge_data_using_scan(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
+                }else{
+                    result = current_block->get_edge_data_using_delta_chains(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
                 }
+                //std::cout<<result<<std::endl;
+                BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+                return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS, result);
             }else{
                 if(current_block->get_previous_ptr())[[likely]]{
                     EdgeDeltaBlockHeader* previous_block = block_manager.convert<EdgeDeltaBlockHeader>(current_block->get_previous_ptr());

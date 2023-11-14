@@ -391,7 +391,217 @@ namespace bwgraph {
                                                   uint64_t txn_id){
             BaseEdgeDelta* current_delta;
             LightEdgeDelta* current_light_delta;
+            uint32_t latest_version_start_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
+            uint32_t normal_end_offset = latest_version_start_offset + padded*LIGHT_DELTA_SIZE;
+            if(offset>normal_end_offset){
+                current_delta = get_edge_delta(offset);
+            }
+            if(latest_version_start_offset){
+                current_light_delta = get_light_edge_delta(latest_version_start_offset);
+            }
+            //now do the scan
+            while(offset){
+                if(offset == normal_end_offset && offset != latest_version_start_offset){
+                    offset -= LIGHT_DELTA_SIZE;
+                    continue;
+                }
+                if(offset > normal_end_offset){
+                    uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+#if EDGE_DELTA_TEST
+                    if(!original_ts){
+                        throw DeltaChainCorruptionException();
+                    }
+#endif
+                    if (original_ts == txn_id && current_delta->toID == dst) {
+                        if(current_delta->data_length<=16){
+                            return std::string_view (current_delta->data,current_delta->data_length);
+                        }else{
+                            return std::string_view (get_edge_data(current_delta->data_offset),current_delta->data_length);
+                        }
+                    }
+                    //if(original_ts)[[likely]]{
+                        //lazy update
+                        if (original_ts != txn_id && is_txn_id(original_ts)) {
+                            uint64_t status = 0;
+                            if (txn_tables->get_status(original_ts, status))[[likely]] {
+                                if (status != IN_PROGRESS && status != ABORT) {
+#if CHECKED_PUT_EDGE
+                                    update_previous_delta_invalidate_ts(current_delta->toID,
+                                                                        current_delta->previous_version_offset, status);
+#else
+                                    update_previous_delta_invalidate_ts(current_delta->toID, current_delta->previous_offset, status);
+#endif
+                                    if (current_delta->lazy_update(original_ts, status)) {
+#if LAZY_LOCKING
+                                        if(current_delta->is_last_delta.load(std::memory_order_acquire)){
+                                release_protection(current_delta->toID);
+                            }
+#endif
+                                        auto result = lazy_update_records.try_emplace(original_ts, 1);
+                                        if (!result.second) {
+                                            result.first->second++;
+                                        }
+                                    }
+                                    original_ts = status;
+                                } else {
+                                    //skip abort or in progress deltas
+                                    offset -= ENTRY_DELTA_SIZE;
+                                    current_delta++;
+                                    continue;
+                                }
+                            }
+                            //skip aborted deltas
+                        } else if (original_ts == ABORT)[[unlikely]] {
+                            offset -= ENTRY_DELTA_SIZE;
+                            current_delta++;
+                            continue;
+                        }
+                        //now original ts is either a timestamp, or a txn id that equals me
+#if EDGE_DELTA_TEST
+                        if(is_txn_id(original_ts)&&original_ts!=txn_id){
+                            throw LazyUpdateException();
+                        }
+                        if(original_ts== ABORT ||original_ts == IN_PROGRESS){
+                            throw LazyUpdateException();
+                        }
+#endif
+                        if(current_delta->toID == dst && original_ts <= txn_read_ts){
+                            if(current_delta->data_length<=16){
+                                return std::string_view (current_delta->data,current_delta->data_length);
+                            }else{
+                                return std::string_view (get_edge_data(current_delta->data_offset),current_delta->data_length);
+                            }
+                            //return std::string_view (get_edge_data(current_delta->data_offset),current_delta->data_length);
+                        }
+                    //}
+                    offset-=ENTRY_DELTA_SIZE;
+                    current_delta++;
+                }else{
+                    if(current_light_delta->toID == dst && current_light_delta->creation_ts <= txn_read_ts){
+                        return std::string_view (get_edge_data(current_light_delta->data_offset),current_light_delta->data_length);
+                    }
+                    offset -= LIGHT_DELTA_SIZE;
+                    current_light_delta++;
+                }
+            }
+            return std::string_view ();
+        }
 
+        std::string_view get_edge_data_using_delta_chains(uint32_t offset, vertex_t dst, uint64_t txn_read_ts,
+                                                          std::unordered_map<uint64_t, int32_t> &lazy_update_records,
+                                                          uint64_t txn_id){
+            BaseEdgeDelta* current_delta;
+            uint32_t latest_version_start_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
+            uint32_t normal_end_offset = latest_version_start_offset + padded*LIGHT_DELTA_SIZE;
+
+            bool search_light_delta = false;
+            while(offset){
+                if(offset > normal_end_offset){
+                    current_delta = get_edge_delta(offset);
+#if EDGE_DELTA_TEST
+                    if(!current_delta->creation_ts.load(std::memory_order_acquire)){
+                        throw DeltaChainCorruptionException();
+                    }
+#endif
+                    uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    if (is_txn_id(original_ts)) {
+                        uint64_t status = 0;
+                        if (txn_tables->get_status(original_ts, status))[[likely]] {
+                            if (status == IN_PROGRESS) {
+                                offset = current_delta->previous_offset;
+                                continue;
+                            } else {
+                                if (status != ABORT) {
+#if CHECKED_PUT_EDGE
+                                    update_previous_delta_invalidate_ts(current_delta->toID,
+                                                                        current_delta->previous_version_offset,
+                                                                        status);
+#else
+                                    update_previous_delta_invalidate_ts(current_delta->toID, current_delta->previous_offset,
+                                                                status);
+#endif
+                                    if (current_delta->lazy_update(original_ts, status)) {
+#if LAZY_LOCKING
+                                        if(current_delta->is_last_delta){
+                                    release_protection(current_delta->toID);
+                                }
+#endif
+                                        auto result = lazy_update_records.try_emplace(original_ts, 1);
+                                        if (!result.second) {
+                                            result.first->second++;
+                                        }
+                                    }
+                                }
+                                original_ts = status;
+#if EDGE_DELTA_TEST
+                                if(current_delta->creation_ts.load(std::memory_order_acquire)!=status){
+                                    throw LazyUpdateException();
+                                }
+#endif
+                            }
+                        }else{
+                            original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                        }
+                    }
+#if EDGE_DELTA_TEST
+                    if(original_ts==IN_PROGRESS||original_ts == ABORT || is_txn_id(current_delta->creation_ts)){
+                        throw new std::runtime_error("error, lazy update failed");
+                    }
+#endif
+                    if(current_delta->toID == dst){
+                        if(original_ts <= txn_read_ts){
+                            if(current_delta->data_length<=16){
+                                return std::string_view (current_delta->data,current_delta->data_length);
+                            }else{
+                                return std::string_view (get_edge_data(current_delta->data_offset),current_delta->data_length);
+                            }
+                        }else{
+                            offset = current_delta->previous_version_offset;
+                        }
+                    }else{
+                        offset = current_delta->previous_offset;
+                    }
+                }else{//light deltas
+                    search_light_delta = true;
+                    break;
+                }
+            }
+            if(search_light_delta){
+                if(offset <= LIGHT_DELTA_SIZE * 10){
+                    auto current_light_delta = get_light_edge_delta(offset);
+                    while(offset >0){
+                        if(current_light_delta->toID == dst){
+                            if(current_light_delta->creation_ts<= txn_read_ts){
+                                return std::string_view(get_edge_data(current_light_delta->data_offset),current_light_delta->data_length);
+                            }else{
+                                return std::string_view();
+                            }
+                        }
+                        current_light_delta++;
+                        offset -=LIGHT_DELTA_SIZE;
+                    }
+                    return std::string_view();
+                }else{
+                    auto* light_deltas_array = get_light_edge_delta(latest_version_start_offset);
+                    uint32_t left = (latest_version_start_offset-offset)/LIGHT_DELTA_SIZE;
+                    uint32_t right = latest_version_start_offset/LIGHT_DELTA_SIZE - 1;
+                    while(left<=right){
+                        uint32_t mid = left + (right - left)/2;
+                        if(light_deltas_array[mid].toID==dst){
+                            if(light_deltas_array[mid].creation_ts<=txn_read_ts)
+                                return std::string_view(get_edge_data(light_deltas_array[mid].data_offset),light_deltas_array[mid].data_length);
+                            else
+                                return std::string_view();
+                        }
+                        if(light_deltas_array[mid].toID<dst){
+                            left = mid+1;
+                        }else{
+                            right = mid -1;
+                        }
+                    }
+                }
+            }
+            return std::string_view();
         }
 
         /*
