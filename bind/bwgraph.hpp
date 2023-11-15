@@ -18,6 +18,7 @@ namespace  bwgraph{
     class SharedROTransaction;
     class EdgeDeltaIterator;
     class BaseEdgeDelta;
+    class LightEdgeDelta;
     class SimpleEdgeDeltaIterator;
     class StaticEdgeDeltaIterator;
     class EdgeDeltaBlockHeader;
@@ -35,6 +36,7 @@ namespace bg {
     class SharedROTransaction;
     class EdgeDeltaIterator;
     class SimpleEdgeDeltaIterator;
+    class HybridEdgeDeltaIterator;
     //class SimpleObjectEdgeDeltaIterator;
     class StaticEdgeDeltaIterator;
     class Graph {
@@ -115,7 +117,9 @@ namespace bg {
         SimpleEdgeDeltaIterator simple_get_edges(vertex_t src, label_t label);
         SimpleEdgeDeltaIterator simple_get_edges(vertex_t src, label_t label,uint8_t thread_id);
         void simple_get_edges(vertex_t src, label_t label, uint8_t thread_id, SimpleEdgeDeltaIterator& edge_iterator);
+        void hybrid_get_edges(vertex_t src, label_t label, uint8_t thread_id, HybridEdgeDeltaIterator& edge_iterator);
         SimpleEdgeDeltaIterator generate_edge_delta_iterator(uint8_t thread_id);
+        HybridEdgeDeltaIterator generate_hybrid_edge_delta_iterator(uint8_t thread_id);
         StaticEdgeDeltaIterator generate_static_edge_delta_iterator();
         std::string_view static_get_vertex(vertex_t src);
         std::string_view static_get_edge(vertex_t src, vertex_t dst, label_t label);
@@ -184,6 +188,10 @@ namespace bg {
         std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> iterator;
     private:
         bwgraph::BaseEdgeDelta* current_delta;
+        bwgraph::LightEdgeDelta* current_light_delta;
+        uint32_t remaining_normal_delta_count;
+        uint32_t remaining_light_delta_count;
+
     };
     class StaticEdgeDeltaIterator{
     public:
@@ -203,6 +211,19 @@ namespace bg {
     private:
        
         bwgraph::BaseEdgeDelta* current_delta;
+    };
+
+    class HybridEdgeDeltaIterator{
+    public:
+        HybridEdgeDeltaIterator(std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> _iter);
+        ~HybridEdgeDeltaIterator();
+        void close();
+        bool valid();
+        void next();
+        vertex_t dst_id()const;
+        std::string_view  edge_delta_data() const;
+        double get_weight();
+        std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> iterator;
     };
    /* class SimpleObjectEdgeDeltaIterator{
         SimpleObjectEdgeDeltaIterator();

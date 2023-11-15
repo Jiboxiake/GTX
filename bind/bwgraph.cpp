@@ -261,6 +261,10 @@ SimpleEdgeDeltaIterator SharedROTransaction::generate_edge_delta_iterator(uint8_
     return std::make_unique<impl::SimpleEdgeDeltaIterator>(txn->generate_edge_iterator(thread_id));
 }
 
+HybridEdgeDeltaIterator SharedROTransaction::generate_hybrid_edge_delta_iterator(uint8_t thread_id) {
+    return std::make_unique<impl::SimpleEdgeDeltaIterator>(txn->generate_edge_iterator(thread_id));
+}
+
 StaticEdgeDeltaIterator SharedROTransaction::generate_static_edge_delta_iterator(){
     return std::make_unique<impl::StaticEdgeDeltaIterator>(txn->generate_static_edge_iterator());
 }
@@ -308,6 +312,15 @@ void SharedROTransaction::simple_get_edges(bg::vertex_t src, bg::label_t label, 
     }
 }
 
+void SharedROTransaction::hybrid_get_edges(bg::vertex_t src, bg::label_t label, uint8_t thread_id,
+                                           bg::HybridEdgeDeltaIterator &edge_iterator) {
+    while(true){
+        auto result = txn->simple_get_edges(src,label,thread_id,edge_iterator.iterator);
+        if(result == bwgraph::Txn_Operation_Response::SUCCESS){
+            return;
+        }
+    }
+}
 
 void SharedROTransaction::print_debug_info() {
     std::cout<<"Shared RO Transaction printing debug info"<<std::endl;
@@ -505,7 +518,9 @@ std::string_view EdgeDeltaIterator::edge_delta_data() const {
 }
 
 //simple edge iterator
-SimpleEdgeDeltaIterator::SimpleEdgeDeltaIterator(std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> _iter):iterator(std::move(_iter)) {}
+SimpleEdgeDeltaIterator::SimpleEdgeDeltaIterator(std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> _iter):iterator(std::move(_iter)) {
+
+}
 
 SimpleEdgeDeltaIterator::~SimpleEdgeDeltaIterator() = default;
 
@@ -575,4 +590,35 @@ uint32_t StaticEdgeDeltaIterator::vertex_degree(){
 }
 double StaticEdgeDeltaIterator::get_weight() {
     return *reinterpret_cast<double*>(current_delta->data);
+}
+
+HybridEdgeDeltaIterator::HybridEdgeDeltaIterator(std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> _iter):iterator(std::move(_iter)) {
+
+}
+
+HybridEdgeDeltaIterator::~HybridEdgeDeltaIterator() = default;
+
+void HybridEdgeDeltaIterator::next() {
+    iterator->next();
+}
+
+bool HybridEdgeDeltaIterator::valid() {
+    iterator->next();
+    return iterator->valid();
+}
+
+void HybridEdgeDeltaIterator::close() {
+    iterator->close();
+}
+
+vertex_t HybridEdgeDeltaIterator::dst_id() const {
+    return iterator->dst_id();
+}
+
+std::string_view HybridEdgeDeltaIterator::edge_delta_data() const {
+    return iterator->get_edge_data();
+}
+
+double HybridEdgeDeltaIterator::get_weight() {
+    return iterator->get_weight();
 }

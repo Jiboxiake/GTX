@@ -382,7 +382,42 @@ namespace bwgraph {
             }
             return nullptr;
         }
-
+        std::string_view scan_previous_block_find_edge_data(bwgraph::vertex_t vid, timestamp_t read_ts){
+            uint32_t offset = get_delta_offset_from_combined_offset(combined_offsets.load(std::memory_order_relaxed));
+            BaseEdgeDelta* current_delta = get_edge_delta(offset);
+            LightEdgeDelta* current_light_delta;
+            uint32_t latest_version_start_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
+            uint32_t normal_end_offset = latest_version_start_offset + padded*LIGHT_DELTA_SIZE;
+            if(latest_version_start_offset){
+                current_light_delta = get_light_edge_delta(latest_version_start_offset);
+            }
+            while(offset>0){
+                if(offset > normal_end_offset){
+                    if(current_delta->toID==vid&&current_delta->creation_ts.load(std::memory_order_relaxed)<=read_ts){
+                        if(current_delta->data_length<=16){
+                            return std::string_view (current_delta->data,current_delta->data_length);
+                        }else{
+                            return std::string_view (get_edge_data(current_delta->data_offset),current_delta->data_length);
+                        }
+                    }else{
+                        current_delta++;
+                        offset -= ENTRY_DELTA_SIZE;
+                    }
+                }else{
+                    if(current_light_delta->toID == vid){
+                        if(current_light_delta->creation_ts<= read_ts){
+                            return std::string_view(get_edge_data(current_light_delta->data_offset),current_light_delta->data_length);
+                        }else{
+                            return std::string_view();
+                        }
+                    }else{
+                        current_light_delta++;
+                        offset -= LIGHT_DELTA_SIZE;
+                    }
+                }
+            }
+            return std::string_view ();
+        }
         /*
          * get target property/data using scan, or return empty string view if no exist
          */

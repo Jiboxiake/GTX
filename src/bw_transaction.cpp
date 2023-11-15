@@ -1303,9 +1303,9 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
 std::string_view
 RWTransaction::scan_previous_block_find_edge(bwgraph::EdgeDeltaBlockHeader *previous_block, bwgraph::vertex_t vid) {
     //todo: delete this
-    throw std::runtime_error("currently should not scan any previous block");
     uint64_t combined_offset = previous_block->get_current_offset();
     current_delta_offset = EdgeDeltaBlockHeader::get_delta_offset_from_combined_offset(combined_offset);
+
     BaseEdgeDelta* current_delta = previous_block->get_edge_delta(current_delta_offset);
     while(current_delta_offset>0){
         if(current_delta->toID==vid){
@@ -1358,6 +1358,7 @@ RWTransaction::get_edge(bwgraph::vertex_t src, bwgraph::vertex_t dst, bwgraph::l
 
                 target_delta = current_block->get_visible_target_using_scan(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
             }else{
+                target_delta = current_block->get_visible_target_delta_using_delta_chain(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
                 target_delta = current_block->get_visible_target_delta_using_delta_chain(offset,dst,read_timestamp,lazy_update_records,local_txn_id);
             }
 #if EDGE_DELTA_TEST
@@ -1438,7 +1439,7 @@ RWTransaction::get_edge(bwgraph::vertex_t src, bwgraph::vertex_t dst, bwgraph::l
                         }
                     }
                     return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS,
-                                                                              scan_previous_block_find_edge(previous_block,dst));
+                                                                              previous_block->scan_previous_block_find_edge_data(dst,read_timestamp));
                 }else{
                     BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);//reading previous block needs no protection, it is protected by read epoch
                     return std::pair<Txn_Operation_Response,std::string_view>(Txn_Operation_Response::SUCCESS,
@@ -2420,6 +2421,7 @@ ROTransaction::scan_previous_block_find_edge(bwgraph::EdgeDeltaBlockHeader *prev
     uint64_t combined_offset = previous_block->get_current_offset();
     uint32_t current_delta_offset = EdgeDeltaBlockHeader::get_delta_offset_from_combined_offset(combined_offset);
     BaseEdgeDelta* current_delta = previous_block->get_edge_delta(current_delta_offset);
+
     while(current_delta_offset>0){
         if(current_delta->toID==vid){
             uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
@@ -2900,6 +2902,7 @@ SharedROTransaction::simple_get_edges(bwgraph::vertex_t src, bwgraph::label_t la
         return Txn_Operation_Response::READER_WAIT;
     }
 }
+
 
 std::string_view SharedROTransaction::scan_previous_block_find_edge(bwgraph::EdgeDeltaBlockHeader *previous_block,
                                                                     bwgraph::vertex_t vid) {
