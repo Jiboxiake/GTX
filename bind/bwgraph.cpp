@@ -622,3 +622,7 @@ std::string_view HybridEdgeDeltaIterator::edge_delta_data() const {
 double HybridEdgeDeltaIterator::get_weight() {
     return iterator->get_weight();
 }
+
+uint32_t HybridEdgeDeltaIterator::neighborhood_size() {
+    return iterator->vertex_degree();
+}

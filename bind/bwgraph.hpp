@@ -188,9 +188,9 @@ namespace bg {
         std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> iterator;
     private:
         bwgraph::BaseEdgeDelta* current_delta;
-        bwgraph::LightEdgeDelta* current_light_delta;
-        uint32_t remaining_normal_delta_count;
-        uint32_t remaining_light_delta_count;
+        //bwgraph::LightEdgeDelta* current_light_delta;
+        //uint32_t remaining_normal_delta_count;
+        //uint32_t remaining_light_delta_count;
 
     };
     class StaticEdgeDeltaIterator{
@@ -223,6 +223,7 @@ namespace bg {
         vertex_t dst_id()const;
         std::string_view  edge_delta_data() const;
         double get_weight();
+        uint32_t neighborhood_size();
         std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> iterator;
     };
    /* class SimpleObjectEdgeDeltaIterator{

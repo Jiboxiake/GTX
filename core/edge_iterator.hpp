@@ -660,34 +660,65 @@ namespace bwgraph {
                 }
                 return_result_light_delta = nullptr;
 
-            } else {
-                while (current_delta_offset > 0) {
-                    if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
-                        uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_relaxed);
-                        uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(std::memory_order_relaxed);
-                        //for debug
-                        /* if(!current_delta->toID){
-                             std::cout<<"error, previous block is cleared"<<std::endl;
-                             current_delta->print_stats();
-                             throw std::runtime_error("error bad");
-                         }*/
-                        if (current_creation_ts <= txn_read_ts &&
-                            (current_invalidation_ts == 0 || current_invalidation_ts > txn_read_ts)) {
-                            current_delta_offset -= ENTRY_DELTA_SIZE;
+            } else {//read previous block
+                while (current_delta_offset > normal_end_offset) {
+                    uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                        if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+                            //uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                            uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(
+                                    std::memory_order_acquire);
+                            //for debug
+                            /*  if(!current_delta->toID){
+                                  std::cout<<"error, current block is cleared"<<std::endl;
+                                  current_delta->print_stats();
+                                  throw std::runtime_error("error bad");
+                              }*/
+                            //cannot be the delta deleted by the current transaction
+                            // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
+                            //visible committed delta
+                            if (original_ts <= txn_read_ts && (current_invalidation_ts == 0 ||
+                                                               current_invalidation_ts >
+                                                               txn_read_ts)) {
+                                current_delta_offset -= ENTRY_DELTA_SIZE;
 #if USING_READER_PREFETCH
-                            //if(current_delta_offset>=prefetch_offset)
-                            _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
+                                //if(current_delta_offset>=prefetch_offset)
+                                _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
 #endif
-                            return_result_delta = current_delta++;
+                                return_result_delta = current_delta++;
+                                return;
+                            }
+                            //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
+                            //visible delta by myself
+                            /*else if(current_creation_ts==txn_id)[[unlikely]]{
+                                current_delta_offset-=  ENTRY_DELTA_SIZE;
+                                _mm_prefetch((const void*)(current_delta+8),_MM_HINT_T2);
+                                return current_delta++;
+                            }*/
+
                         }
-                    }
-                    current_delta_offset -= ENTRY_DELTA_SIZE;
+                        current_delta_offset -= ENTRY_DELTA_SIZE;
 #if USING_READER_PREFETCH
-                    //if(current_delta_offset>=prefetch_offset)
-                    _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
+                        //if(current_delta_offset>=prefetch_offset)
+                        _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
 #endif
-                    current_delta++;
+                        current_delta++;
                 }
+                current_delta = nullptr;
+                return_result_delta = nullptr;
+                if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                while(current_delta_offset>0){
+                    if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
+                        //found delta
+                        current_delta_offset-=LIGHT_DELTA_SIZE;
+                        return_result_light_delta = current_light_delta++;
+                        return;
+                    }
+                    current_light_delta++;
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                return_result_light_delta = nullptr;
             }
         }
         //An optimization for pagerank, but we did not use it eventually
@@ -930,8 +961,8 @@ namespace bwgraph {
             uint64_t edge_count = 0;
             //keep scanning the current block with lazy update, when the current block is exhausted, set "read_current_block" to false and move on
             if (read_current_block) {
-                //scan the current block, return pointers as appropriate, then maybe switch to the previous block
-                while (current_delta_offset > 0) {
+                //read normal blocks
+                while (current_delta_offset > normal_end_offset) {
                     uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                     if (!original_ts)[[unlikely]] {
                         current_delta_offset -= ENTRY_DELTA_SIZE;
@@ -977,6 +1008,8 @@ namespace bwgraph {
 #endif
                                 original_ts = status;
                             }
+                        } else {
+                            original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                         }
                         if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
                             //uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_acquire);
@@ -989,13 +1022,15 @@ namespace bwgraph {
                                   throw std::runtime_error("error bad");
                               }*/
                             //cannot be the delta deleted by the current transaction
-                            //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
-                            // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
                             //visible committed delta
                             if (/*current_creation_ts*/original_ts <= txn_read_ts && (current_invalidation_ts == 0 ||
                                                                                       current_invalidation_ts >
                                                                                       txn_read_ts)) {
+                                current_delta_offset -= ENTRY_DELTA_SIZE;
+                                return_result_delta = current_delta++;
                                 edge_count++;
+                                continue;
+                                //return;
                             }
                             //visible delta by myself
                             //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
@@ -1019,16 +1054,23 @@ namespace bwgraph {
                                   throw std::runtime_error("error bad");
                               }*/
                             //cannot be the delta deleted by the current transaction
-                            //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
                             // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
                             //visible committed delta
-                            if (/*current_creation_ts*/original_ts <= txn_read_ts && (current_invalidation_ts == 0 ||
-                                                                                      current_invalidation_ts >
-                                                                                      txn_read_ts)) {
+                            if (original_ts <= txn_read_ts && (current_invalidation_ts == 0 ||
+                                                               current_invalidation_ts >
+                                                               txn_read_ts)) {
+                                current_delta_offset -= ENTRY_DELTA_SIZE;
+#if USING_READER_PREFETCH
+                                //if(current_delta_offset>=prefetch_offset)
+                                _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
+#endif
+                                return_result_delta = current_delta++;
                                 edge_count++;
+                                continue;
+                                //return;
                             }
-                            //visible delta by myself
                             //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
+                            //visible delta by myself
                             /*else if(current_creation_ts==txn_id)[[unlikely]]{
                                 current_delta_offset-=  ENTRY_DELTA_SIZE;
                                 _mm_prefetch((const void*)(current_delta+8),_MM_HINT_T2);
@@ -1043,31 +1085,89 @@ namespace bwgraph {
 #endif
                         current_delta++;
                     }
-
                 }
-            } else {
-                while (current_delta_offset > 0) {
-                    //abort deltas will always have larger creation ts than any read ts
+                //current_delta = nullptr;
+                //return_result_delta = nullptr;
+                if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                while(current_delta_offset>0){
+                    if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
+                        //found delta
+                        current_delta_offset-=LIGHT_DELTA_SIZE;
+                        return_result_light_delta = current_light_delta++;
+                        edge_count++;
+                        continue;
+                        //return;
+                    }
+                    current_light_delta++;
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                return_result_light_delta = nullptr;
+
+            } else {//read previous block
+                while (current_delta_offset > normal_end_offset) {
+                    uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                     if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
-                        uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_relaxed);
-                        uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(std::memory_order_relaxed);
+                        //uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                        uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(
+                                std::memory_order_acquire);
                         //for debug
-                        /* if(!current_delta->toID){
-                             std::cout<<"error, previous block is cleared"<<std::endl;
-                             current_delta->print_stats();
-                             throw std::runtime_error("error bad");
-                         }*/
-                        if (current_creation_ts <= txn_read_ts &&
-                            (current_invalidation_ts == 0 || current_invalidation_ts > txn_read_ts)) {
+                        /*  if(!current_delta->toID){
+                              std::cout<<"error, current block is cleared"<<std::endl;
+                              current_delta->print_stats();
+                              throw std::runtime_error("error bad");
+                          }*/
+                        //cannot be the delta deleted by the current transaction
+                        // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
+                        //visible committed delta
+                        if (original_ts <= txn_read_ts && (current_invalidation_ts == 0 ||
+                                                           current_invalidation_ts >
+                                                           txn_read_ts)) {
+                            current_delta_offset -= ENTRY_DELTA_SIZE;
+#if USING_READER_PREFETCH
+                            //if(current_delta_offset>=prefetch_offset)
+                            _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
+#endif
+                            return_result_delta = current_delta++;
                             edge_count++;
+                            continue;
+                            //return;
                         }
+                        //we currently omit this condition as the experiments only use read-only transactions to scan adjacency list
+                        //visible delta by myself
+                        /*else if(current_creation_ts==txn_id)[[unlikely]]{
+                            current_delta_offset-=  ENTRY_DELTA_SIZE;
+                            _mm_prefetch((const void*)(current_delta+8),_MM_HINT_T2);
+                            return current_delta++;
+                        }*/
+
                     }
                     current_delta_offset -= ENTRY_DELTA_SIZE;
 #if USING_READER_PREFETCH
+                    //if(current_delta_offset>=prefetch_offset)
                     _mm_prefetch((const void *) (current_delta + PREFETCH_STEP), _MM_HINT_T2);
 #endif
                     current_delta++;
                 }
+                current_delta = nullptr;
+                return_result_delta = nullptr;
+                if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                while(current_delta_offset>0){
+                    if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
+                        //found delta
+                        current_delta_offset-=LIGHT_DELTA_SIZE;
+                        return_result_light_delta = current_light_delta++;
+                        edge_count++;
+                        continue;
+                        //return;
+                    }
+                    current_light_delta++;
+                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                }
+                return_result_light_delta = nullptr;
             }
             close();
             return edge_count;
