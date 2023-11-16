@@ -126,7 +126,7 @@ Txn_Operation_Response RWTransaction::checked_put_edge(bwgraph::vertex_t src, bw
     BwLabelEntry* target_label_entry =writer_access_label(src,label);
     if(!target_label_entry)[[unlikely]]{
         //todo:: this should not happen?
-        // std::cout<<"should never happen"<<std::endl;
+         //std::cout<<"should never happen"<<std::endl;
         return Txn_Operation_Response::FAIL;
     }
     //calculate block id
@@ -184,6 +184,7 @@ Txn_Operation_Response RWTransaction::checked_put_edge(bwgraph::vertex_t src, bw
             auto lock_result = current_block->simple_set_protection_on_delta_chain(target_delta_chain_id,&lazy_update_records,read_timestamp,&current_delta_chain_head_offset);
             if(lock_result==Delta_Chain_Lock_Response::CONFLICT)[[unlikely]]{
                 BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+                //std::cout<<"here abort"<<std::endl;
                 return Txn_Operation_Response::FAIL; //abort on write-write conflict
             }else if(lock_result == Delta_Chain_Lock_Response::UNCLEAR)[[unlikely]]{
                 BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
@@ -1909,6 +1910,7 @@ bool RWTransaction::eager_commit() {
 #endif
         return false;
     }
+    //std::cout<<"passed validation"<<std::endl;
 #endif //LAZY_LOCKING
     self_entry->op_count.store(op_count,std::memory_order_release);
     commit_manager.txn_commit(thread_id,self_entry,true);//now do it simple, just wait

@@ -31,7 +31,7 @@ namespace bwgraph {
 #define MAX_LOCK_INHERITANCE_ROUND 3
 #define ERROR_ENTRY_OFFSET 0xFFFFFFFF
 
-#define EDGE_DELTA_TEST true
+#define EDGE_DELTA_TEST false
 #define Count_Lazy_Protocol true
 #define PESSIMISTIC_DELTA_BLOCK true
 
@@ -1195,6 +1195,7 @@ namespace bwgraph {
             uint32_t latest_delta_chain_head_offset = target_chain_index_entry.get_offset();
             //locked directly return conflict
             if (latest_delta_chain_head_offset & LOCK_MASK) {
+                //std::cout<<"1"<<std::endl;
                 return Delta_Chain_Lock_Response::CONFLICT;
             }
             //unlocked and has offset
@@ -1228,12 +1229,15 @@ namespace bwgraph {
                                         *offset_copy = latest_delta_chain_head_offset;
                                         return Delta_Chain_Lock_Response::SUCCESS;
                                     } else {
+                                        //std::cout<<"2"<<std::endl;
                                         return Delta_Chain_Lock_Response::CONFLICT;
                                     }
                                 } else {
+                                    //std::cout<<"3"<<std::endl;
                                     return Delta_Chain_Lock_Response::CONFLICT;
                                 }
                             } else if (status == IN_PROGRESS) {
+                                //std::cout<<"x"<<std::endl;
                                 return Delta_Chain_Lock_Response::CONFLICT;
                             } else {
 #if EDGE_DELTA_TEST
@@ -1253,9 +1257,11 @@ namespace bwgraph {
                                 *offset_copy = latest_delta_chain_head_offset;
                                 return Delta_Chain_Lock_Response::SUCCESS;
                             } else {
+                                //std::cout<<"4"<<std::endl;
                                 return Delta_Chain_Lock_Response::CONFLICT;
                             }
                         } else {
+                           // std::cout<<"5"<<std::endl;
                             return Delta_Chain_Lock_Response::CONFLICT;
                         }
                     } else {
@@ -1273,9 +1279,11 @@ namespace bwgraph {
                             *offset_copy = latest_delta_chain_head_offset;
                             return Delta_Chain_Lock_Response::SUCCESS;
                         } else {
+                            //std::cout<<"6"<<std::endl;
                             return Delta_Chain_Lock_Response::CONFLICT;
                         }
                     }else{
+                        //std::cout<<"7"<<std::endl;
                         return Delta_Chain_Lock_Response::CONFLICT;
                     }
                 }
@@ -1284,6 +1292,7 @@ namespace bwgraph {
                     *offset_copy = latest_delta_chain_head_offset;
                     return Delta_Chain_Lock_Response::SUCCESS;
                 } else {
+                    //std::cout<<"8"<<std::endl;
                     return Delta_Chain_Lock_Response::CONFLICT;
                 }
             }
@@ -1587,19 +1596,32 @@ namespace bwgraph {
                         return 0;
                     }else{
                         //binary search
+                        /*if(latest_version_start_offset<start_offset){
+                            throw std::runtime_error("fetch previous version error");
+                        }*/
                         auto* light_deltas_array = get_light_edge_delta(latest_version_start_offset);
-                        uint32_t left = (latest_version_start_offset-start_offset)/LIGHT_DELTA_SIZE;
-                        uint32_t right = latest_version_start_offset/LIGHT_DELTA_SIZE - 1;
+                        int32_t left = static_cast<int32_t>((latest_version_start_offset-start_offset)/LIGHT_DELTA_SIZE);
+                        int32_t right = static_cast<int32_t>(latest_version_start_offset/LIGHT_DELTA_SIZE - 1);
+                        //for debug
+                        //uint32_t initial_left = left;
+                        //uint32_t initial_right = right;
                         while(left<=right){
-                            uint32_t mid = left + (right - left)/2;
+#if EDGE_DELTA_TEST
+                            if(left>latest_version_start_offset/LIGHT_DELTA_SIZE||right>latest_version_start_offset/LIGHT_DELTA_SIZE){
+                                throw std::runtime_error("fetch previous version error");
+                            }
+#endif
+                            int32_t mid = left + (right - left)/2;
                             if(light_deltas_array[mid].toID==vid){
                                 //found
                                 light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
                                 return (latest_version_start_offset-mid*LIGHT_DELTA_SIZE);
                             }
-                            if(light_deltas_array[mid].toID<vid){
+                            else if(light_deltas_array[mid].toID<vid){
+                                //initial_left= left;
                                 left = mid+1;
                             }else{
+                                //initial_right = right;
                                 right = mid -1;
                             }
                         }

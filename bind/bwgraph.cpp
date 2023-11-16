@@ -384,6 +384,7 @@ RWTransaction::checked_put_edge(bg::vertex_t src, bg::label_t label, bg::vertex_
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         txn->get_graph().local_thread_edge_write_time.local()+= duration.count();
 #endif
+        //std::cout<<"executed"<<std::endl;
         if(result == bwgraph::Txn_Operation_Response::SUCCESS_NEW_DELTA){
             return true;
         }else if(result == bwgraph::Txn_Operation_Response::SUCCESS_EXISTING_DELTA){
@@ -393,6 +394,7 @@ RWTransaction::checked_put_edge(bg::vertex_t src, bg::label_t label, bg::vertex_
 #if TRACK_COMMIT_ABORT
             txn->get_graph().register_abort();
 #endif
+            //std::cout<<"abort"<<std::endl;
             throw RollbackExcept("write write conflict edge");
         }
 #if TRACK_COMMIT_ABORT
