@@ -481,11 +481,10 @@ namespace bwgraph {
             }else if(return_result_light_delta){
                 return return_result_light_delta->toID;
             }
-#if EDGE_DELTA_TEST
-            else{
+            else[[unlikely]]{
                 throw std::runtime_error("iterator should not reach here");
             }
-#endif
+
         }
         inline std::string_view get_edge_data(){
             if(return_result_delta){
@@ -497,11 +496,9 @@ namespace bwgraph {
             }else if(return_result_light_delta){
                 return {current_delta_block->get_edge_data(return_result_light_delta->data_offset),return_result_light_delta->data_length};
             }
-#if EDGE_DELTA_TEST
-            else{
+            else[[unlikely]]{
                 throw std::runtime_error("iterator should not reach here");
             }
-#endif
         }
         inline double get_weight(){
             if(current_delta){

@@ -402,6 +402,36 @@ RWTransaction::checked_put_edge(bg::vertex_t src, bg::label_t label, bg::vertex_
 #endif
     }
 }
+
+bool RWTransaction::checked_single_put_edge(bg::vertex_t src, bg::label_t label, bg::vertex_t dst,
+                                            std::string_view edge_data) {
+    while (true) {
+#if TRACK_EXECUTION_TIME
+        auto start = std::chrono::high_resolution_clock::now();
+#endif
+        auto result = txn->checked_single_edge_insertion(src, dst, label, edge_data);
+#if TRACK_EXECUTION_TIME
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        txn->get_graph().local_thread_edge_write_time.local()+= duration.count();
+#endif
+        //std::cout<<"executed"<<std::endl;
+        if (result == bwgraph::Txn_Operation_Response::SUCCESS_NEW_DELTA) {
+            return true;
+        } else if (result == bwgraph::Txn_Operation_Response::SUCCESS_EXISTING_DELTA) {
+            return false;
+        } else if (result == bwgraph::Txn_Operation_Response::FAIL)[[unlikely]] {
+#if TRACK_COMMIT_ABORT
+            txn->get_graph().register_abort();
+#endif
+            //std::cout<<"abort"<<std::endl;
+            throw RollbackExcept("write write conflict edge");
+        }
+#if TRACK_COMMIT_ABORT
+        txn->get_graph().register_loop();
+#endif
+    }
+}
 void RWTransaction::delete_edge(bg::vertex_t src, bg::label_t label, bg::vertex_t dst) {
     while(true){
 #if TRACK_EXECUTION_TIME
@@ -427,6 +457,31 @@ bool RWTransaction::checked_delete_edge(bg::vertex_t src, bg::label_t label, bg:
         auto start = std::chrono::high_resolution_clock::now();
 #endif
         auto result = txn->checked_delete_edge(src,dst,label);
+#if TRACK_EXECUTION_TIME
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        txn->get_graph().local_thread_edge_write_time.local()+= duration.count();
+#endif
+        if(result == bwgraph::Txn_Operation_Response::SUCCESS_EXISTING_DELTA){
+            return true;
+        }else if(result == bwgraph::Txn_Operation_Response::SUCCESS_NEW_DELTA){
+            return false;
+        }
+        else if(result ==bwgraph::Txn_Operation_Response::FAIL){
+#if TRACK_COMMIT_ABORT
+            txn->get_graph().register_abort();
+#endif
+            throw RollbackExcept("write write conflict edge");
+        }
+    }
+}
+
+bool RWTransaction::checked_single_delete_edge(bg::vertex_t src, bg::label_t label, bg::vertex_t dst) {
+    while(true){
+#if TRACK_EXECUTION_TIME
+        auto start = std::chrono::high_resolution_clock::now();
+#endif
+        auto result = txn->checked_single_edge_deletion(src,dst,label);
 #if TRACK_EXECUTION_TIME
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);

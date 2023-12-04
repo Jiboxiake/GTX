@@ -548,6 +548,8 @@ namespace bwgraph{
         //checked version
         Txn_Operation_Response checked_put_edge(vertex_t src, vertex_t dst, label_t label, std::string_view edge_data);
         Txn_Operation_Response checked_delete_edge(vertex_t src, vertex_t dst, label_t label);
+        Txn_Operation_Response checked_single_edge_insertion(vertex_t src, vertex_t dst, label_t label, std::string_view edge_data);
+        Txn_Operation_Response checked_single_edge_deletion(vertex_t src, vertex_t dst, label_t label);
         //Txn_Operation_Response delete_vertex(vertex_t src);
         //Txn_Operation_Response delete(vertex_t src, vertex_t dst, label_t label);
         //transaction graph read operations

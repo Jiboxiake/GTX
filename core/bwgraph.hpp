@@ -42,7 +42,7 @@ namespace bwgraph{
                 global_edge_write_time_array[i]=0;*/
 #endif //TRACK_EXECUTION_TIME
             }
-            std::cout<<"using bwgraph_acq_rel"<<std::endl;
+            std::cout<<"using bwgraph hybrid store"<<std::endl;
     }
 #else //USING_ARRAY_TABLE
         BwGraph(std::string block_path = "",size_t _max_block_size = 1ul << 32,

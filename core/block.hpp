@@ -1427,25 +1427,25 @@ namespace bwgraph {
                 //auto current_delta = get_edge_delta(start_offset);
                 BaseEdgeDelta* current_delta;
                 LightEdgeDelta* current_light_delta;
-                if(start_offset>normal_end_offset){
+                if(start_offset>normal_end_offset)[[likely]]{
                     current_delta = get_edge_delta(start_offset);
                 }
-                if(latest_version_start_offset){
+                if(latest_version_start_offset)[[likely]]{
                     current_light_delta = get_light_edge_delta(latest_version_start_offset);
                 }
-                while (start_offset) {
-                    //check where we are
-                    //skip the padding, if normal end != latest version start
-                    if(start_offset == normal_end_offset && start_offset!=latest_version_start_offset){
-                        start_offset -= LIGHT_DELTA_SIZE;
-                        continue;
-                    }
+/*#if USING_PREFETCH
+                auto num = start_offset / ENTRY_DELTA_SIZE;
+                for (uint32_t i = 0; i < num; i++) {
+                    //__builtin_prefetch((const void*)(current_delta+i),0,0);
+                    _mm_prefetch((const void *) (current_delta + i), _MM_HINT_T2);
+                }
+#endif*/
+                while (start_offset>normal_end_offset) {
                     //still normal deltas
-                    if(start_offset>normal_end_offset){
                         uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                         if (original_ts)[[likely]] {
                             //still do lazy update
-                            if (original_ts != txn_id && is_txn_id(original_ts)) {
+                            if (original_ts != txn_id && is_txn_id(original_ts))[[unlikely]] {
                                 uint64_t status = 0;
                                 if (txn_tables->get_status(original_ts, status))[[likely]] {
                                     if (status != IN_PROGRESS && status != ABORT) {
@@ -1499,7 +1499,7 @@ namespace bwgraph {
                             throw LazyUpdateException();
                         }
 #endif
-                            if (current_delta->toID == vid) {
+                            if (current_delta->toID == vid)[[unlikely]] {
                                 current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                                 if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
                                     return start_offset;
@@ -1510,21 +1510,28 @@ namespace bwgraph {
                         }
                         start_offset -= ENTRY_DELTA_SIZE;
                         current_delta++;
-                    }else{
-                        if(current_light_delta->toID == vid){
-                            current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
-                            return start_offset;
-                        }
-                        start_offset-=LIGHT_DELTA_SIZE;
-                        current_light_delta++;
+
+                }
+                //skip the padding, if normal end != latest version start
+                if(normal_end_offset !=latest_version_start_offset){
+                    start_offset -= LIGHT_DELTA_SIZE;
+                }
+                while (start_offset) {
+                    if(current_light_delta->toID == vid)[[unlikely]]{
+                        current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+                        return start_offset;
                     }
+                    start_offset-=LIGHT_DELTA_SIZE;
+                    current_light_delta++;
                 }
                 return 0;
             } else {
-                bool search_light_delta = false;
-                while (start_offset) {
-                    if(start_offset>normal_end_offset){
+                //bool search_light_delta = false;
+                while (start_offset>normal_end_offset) {
+                    //if(start_offset>normal_end_offset){
+
                         auto current_delta = get_edge_delta(start_offset);
+                    //_mm_prefetch((const void *) get_edge_delta(current_delta->previous_offset), _MM_HINT_T2);
                         uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                         //still do lazy update
                         if (original_ts != txn_id && is_txn_id(original_ts))[[unlikely]] {
@@ -1567,7 +1574,7 @@ namespace bwgraph {
                         throw EagerAbortException();//should not meet aborted delta in the chain
                     }
 #endif
-                        if (current_delta->toID == vid) {
+                        if (current_delta->toID == vid)[[unlikely]] {
                             current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                             if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
                                 return start_offset;
@@ -1576,17 +1583,17 @@ namespace bwgraph {
                             }
                         }
                         start_offset = current_delta->previous_offset;
-                    }else{//start offset >0 but in light delta range
+
+                   /* }else{//start offset >0 but in light delta range
                         search_light_delta = true;
                         break;
-                    }
+                    }*/
                 }
                 //with start offset pointing to a light delta, let's try
-                if(search_light_delta){
                     if(start_offset<=LIGHT_DELTA_SIZE*10){
                         auto current_light_delta = get_light_edge_delta(start_offset);
                         while(start_offset>0){
-                            if(current_light_delta->toID==vid){
+                            if(current_light_delta->toID==vid)[[unlikely]]{
                                 current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                                 return start_offset;
                             }
@@ -1612,7 +1619,7 @@ namespace bwgraph {
                             }
 #endif
                             int32_t mid = left + (right - left)/2;
-                            if(light_deltas_array[mid].toID==vid){
+                            if(light_deltas_array[mid].toID==vid)[[unlikely]]{
                                 //found
                                 light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
                                 return (latest_version_start_offset-mid*LIGHT_DELTA_SIZE);
@@ -1627,7 +1634,7 @@ namespace bwgraph {
                         }
                         return 0;
                     }
-                }
+
                 return 0;
             }
         }
