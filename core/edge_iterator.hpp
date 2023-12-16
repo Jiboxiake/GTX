@@ -510,11 +510,10 @@ namespace bwgraph {
             }else if(current_light_delta){
                 return std::atof(current_delta_block->get_edge_data(current_light_delta->data_offset));//{current_delta_block->get_edge_data(current_light_delta->data_offset),current_light_delta->data_length};
             }
-#if EDGE_DELTA_TEST
-            else{
+            else[[unlikely]]{
                 throw std::runtime_error("iterator should not reach here");
             }
-#endif
+
         }
         void next(){
             //keep scanning the current block with lazy update, when the current block is exhausted, set "read_current_block" to false and move on

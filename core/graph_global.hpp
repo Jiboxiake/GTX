@@ -54,5 +54,6 @@ constexpr uint8_t index_lookup_order_threshold = 12;
 #define USING_SEPARATED_PREFETCH true
 #define PREFETCH_STEP 8
 #define USING_READER_PREFETCH true
+#define USING_SIMPLE_FETCH_PREVIOUS_VERSION true
 constexpr uint32_t prefetch_offset = 512;
 //#endif //BWGRAPH_V2_GRAPH_GLOBAL_HPP

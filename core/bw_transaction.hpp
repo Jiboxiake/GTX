@@ -15,7 +15,7 @@
 #include "edge_delta_block_state_protection.hpp"
 #include <set>
 namespace bwgraph{
-#define CONSOLIDATION_TEST false
+#define CONSOLIDATION_TEST true
 #define TXN_TEST false
     struct LockOffsetCache{
         LockOffsetCache(uint64_t input_version, int32_t input_size):block_version_num(input_version),delta_chain_num(input_size){}

@@ -1272,6 +1272,7 @@ namespace bwgraph {
                         //return Delta_Chain_Lock_Response::UNCLEAR;
                     }
                 }else{//current pointing to is a latest version so we are good I guess
+                    auto current_light_delta = get_light_edge_delta(latest_delta_chain_head_offset);
                     auto current_head_ts = get_light_edge_delta(latest_delta_chain_head_offset)->creation_ts;
                     //still small chance the txn is too old
                     if(current_head_ts<=txn_read_ts)[[likely]]{
@@ -1639,6 +1640,149 @@ namespace bwgraph {
             }
         }
 
+        uint32_t fetch_previous_version_offset_simple(vertex_t vid, uint32_t start_offset, uint64_t txn_id){
+            //calculate the boundary
+            uint32_t latest_version_start_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
+            uint32_t normal_end_offset = latest_version_start_offset + padded*LIGHT_DELTA_SIZE;
+            if (order < index_lookup_order_threshold) {
+                //auto current_delta = get_edge_delta(start_offset);
+                BaseEdgeDelta* current_delta;
+                LightEdgeDelta* current_light_delta;
+                if(start_offset>normal_end_offset)[[likely]]{
+                    current_delta = get_edge_delta(start_offset);
+                }
+                if(latest_version_start_offset)[[likely]]{
+                    current_light_delta = get_light_edge_delta(latest_version_start_offset);
+                }
+/*#if USING_PREFETCH
+                auto num = start_offset / ENTRY_DELTA_SIZE;
+                for (uint32_t i = 0; i < num; i++) {
+                    //__builtin_prefetch((const void*)(current_delta+i),0,0);
+                    _mm_prefetch((const void *) (current_delta + i), _MM_HINT_T2);
+                }
+#endif*/
+                while (start_offset>normal_end_offset) {
+                    //still normal deltas
+                    uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    if (original_ts)[[likely]] {
+                        //skip lazy update
+                        //now current ts is either myself or a valid ts
+#if EDGE_DELTA_TEST
+                        if(is_txn_id(current_delta->creation_ts.load(std::memory_order_acquire))){
+                            if(current_delta->creation_ts.load(std::memory_order_acquire)!=txn_id){
+                                throw LazyUpdateException();
+                            }
+                        }
+                        if(current_delta->creation_ts.load(std::memory_order_acquire)==ABORT){
+                            throw LazyUpdateException();
+                        }
+#endif
+                        if (current_delta->toID == vid) {
+                            current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+                            if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+                                return start_offset;
+                            } else {
+                                return 0;//for delete delta, just return 0 as if no previous version exist
+                            }
+                        }
+                    }
+                    start_offset -= ENTRY_DELTA_SIZE;
+                    current_delta++;
+                }
+                //skip the padding, if normal end != latest version start
+                if(normal_end_offset !=latest_version_start_offset){
+                    start_offset -= LIGHT_DELTA_SIZE;
+                }
+                while (start_offset) {
+                    if(current_light_delta->toID == vid){
+                        current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+                        return start_offset;
+                    }
+                    start_offset-=LIGHT_DELTA_SIZE;
+                    current_light_delta++;
+                }
+                return 0;
+            } else {
+                //bool search_light_delta = false;
+                while (start_offset>normal_end_offset) {
+                    //if(start_offset>normal_end_offset){
+
+                    auto current_delta = get_edge_delta(start_offset);
+                    //_mm_prefetch((const void *) get_edge_delta(current_delta->previous_offset), _MM_HINT_T2);
+                    //uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    //skip lazy update
+
+#if EDGE_DELTA_TEST
+                    else if(original_ts == ABORT){
+                        throw EagerAbortException();//should not meet aborted delta in the chain
+                    }
+#endif
+                    if (current_delta->toID == vid)[[unlikely]] {
+                        current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+                        if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+                            return start_offset;
+                        } else {
+                            return 0;//for delete delta, just return 0 as if no previous version exist
+                        }
+                    }
+                    start_offset = current_delta->previous_offset;
+
+                    /* }else{//start offset >0 but in light delta range
+                         search_light_delta = true;
+                         break;
+                     }*/
+                }
+                //with start offset pointing to a light delta, let's try
+                if(start_offset<=LIGHT_DELTA_SIZE*10){
+                    auto current_light_delta = get_light_edge_delta(start_offset);
+                    while(start_offset>0){
+                        if(current_light_delta->toID==vid)[[unlikely]]{
+                            current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+                            return start_offset;
+                        }
+                        current_light_delta++;
+                        start_offset -=LIGHT_DELTA_SIZE;
+                    }
+                    return 0;
+                }else{
+                    //binary search
+                    /*if(latest_version_start_offset<start_offset){
+                        throw std::runtime_error("fetch previous version error");
+                    }*/
+                    auto* light_deltas_array = get_light_edge_delta(latest_version_start_offset);
+                    int32_t left = static_cast<int32_t>((latest_version_start_offset-start_offset)/LIGHT_DELTA_SIZE);
+                    int32_t right = static_cast<int32_t>(latest_version_start_offset/LIGHT_DELTA_SIZE - 1);
+                    //for debug
+                    //uint32_t initial_left = left;
+                    //uint32_t initial_right = right;
+                    while(left<=right){
+#if EDGE_DELTA_TEST
+                        if(left>latest_version_start_offset/LIGHT_DELTA_SIZE||right>latest_version_start_offset/LIGHT_DELTA_SIZE){
+                                throw std::runtime_error("fetch previous version error");
+                            }
+#endif
+                        int32_t mid = left + (right - left)/2;
+                        if(light_deltas_array[mid].toID==vid){
+                            //found
+                            light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
+                            return (latest_version_start_offset-mid*LIGHT_DELTA_SIZE);
+                        }
+                        else if(light_deltas_array[mid].toID<vid){
+                            //initial_left= left;
+                            left = mid+1;
+                        }else{
+                            //initial_right = right;
+                            right = mid -1;
+                        }
+                    }
+                    return 0;
+                }
+
+                return 0;
+            }
+        }
+
+
         inline bool is_overflow_offset(uint64_t current_offset) {
             uint32_t data_size = (uint32_t) (current_offset >> 32);
             uint32_t delta_size = (uint32_t) (current_offset & SIZE2MASK);
@@ -1898,9 +2042,11 @@ namespace bwgraph {
                 if ((newDataOffset + newEntryOffset) > size)[[unlikely]] {
                     //do consolidation.
                     if ((originalDataOffset + originalEntryOffset) <= size) {
+                        //std::cout<<"fuck1"<<std::endl;
                         return {EdgeDeltaInstallResult::CAUSE_OVERFLOW, 0};
                     }
                     //unset_protection(toID);
+                    //std::cout<<"fuck2"<<std::endl;
                     return {EdgeDeltaInstallResult::ALREADY_OVERFLOW, 0};
                 }
             }

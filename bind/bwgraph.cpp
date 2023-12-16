@@ -490,6 +490,7 @@ bool RWTransaction::checked_single_delete_edge(bg::vertex_t src, bg::label_t lab
         if(result == bwgraph::Txn_Operation_Response::SUCCESS_EXISTING_DELTA){
             return true;
         }else if(result == bwgraph::Txn_Operation_Response::SUCCESS_NEW_DELTA){
+            //std::cout<<"delete edge doesn't exist"<<std::endl;
             return false;
         }
         else if(result ==bwgraph::Txn_Operation_Response::FAIL){
