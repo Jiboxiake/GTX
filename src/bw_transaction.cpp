@@ -749,10 +749,20 @@ Txn_Operation_Response RWTransaction::checked_single_edge_deletion(bwgraph::vert
             if (allocate_delta_result == EdgeDeltaInstallResult::SUCCESS)[[likely]] {
                 uint32_t previous_version_offset = 0;
                 if (current_delta_chain_head_offset)
-                    previous_version_offset = current_block->fetch_previous_version_offset(dst,
+                    /*previous_version_offset = current_block->fetch_previous_version_offset(dst,
                                                                                            current_delta_chain_head_offset,
                                                                                            local_txn_id,
-                                                                                           lazy_update_records);
+                                                                                           lazy_update_records);*/
+#if USING_SIMPLE_FETCH_PREVIOUS_VERSION
+                    previous_version_offset = current_block->fetch_previous_version_offset_simple(dst,
+                                                                                                  current_delta_chain_head_offset,
+                                                                                                  local_txn_id);
+#else
+                previous_version_offset = current_block->fetch_previous_version_offset(dst,
+                                                                                       current_delta_chain_head_offset,
+                                                                                       local_txn_id,
+                                                                                       lazy_update_records);
+#endif
                 if (previous_version_offset)[[likely]] {
                     current_block->checked_append_edge_delta(dst, local_txn_id, EdgeDeltaType::DELETE_DELTA, nullptr, 0,
                                                              current_delta_chain_head_offset, previous_version_offset,
@@ -1183,7 +1193,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
         // now we should also distinguish between normal and light deltas
         //edge case, skip the padding entry.
         if (original_delta_offset == normal_end_offset &&
-            original_delta_offset != latest_version_start_offset)[[unlikely]] {
+            original_delta_offset != latest_version_start_offset) {
             original_delta_offset -= LIGHT_DELTA_SIZE;
             continue;
         }
@@ -1288,6 +1298,8 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
                 auto current_invalidation_ts = current_light_edge_delta->invalidate_ts.load(std::memory_order_acquire);
 #if CONSOLIDATION_TEST
                 if(!current_invalidation_ts|| is_txn_id(current_invalidation_ts)){
+                    //std::cout<<current_invalidation_ts<<std::endl;
+                    current_delta = current_block->get_edge_delta(latest_version_offsets.at(current_light_edge_delta->toID));
                     throw LazyUpdateException();
                 }
 #endif
@@ -2357,7 +2369,8 @@ void RWTransaction::eager_clean_edge_block(uint64_t block_id, bwgraph::LockOffse
             uint32_t current_offset = it->second;
             auto current_delta = current_block->get_edge_delta(current_offset);
             timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
-            while (current_offset > 0 && (original_ts == local_txn_id || original_ts == commit_ts)) {
+            uint64_t latest_version_start_offset = LIGHT_DELTA_SIZE*current_block->latest_version_delta_num();
+            while (current_offset > latest_version_start_offset && (original_ts == local_txn_id || original_ts == commit_ts)) {
 #if USING_PREFETCH
                 //__builtin_prefetch((const void*)current_block->get_edge_delta(current_delta->previous_offset),0,0);
                 _mm_prefetch((const void *) current_block->get_edge_delta(current_delta->previous_offset), _MM_HINT_T2);
@@ -2367,7 +2380,11 @@ void RWTransaction::eager_clean_edge_block(uint64_t block_id, bwgraph::LockOffse
                                                                        current_delta->previous_version_offset,
                                                                        commit_ts);
                     if (current_delta->lazy_update(original_ts, commit_ts)) {
-                        self_entry->op_count.fetch_sub(1, std::memory_order_acq_rel);
+                        //self_entry->op_count.fetch_sub(1, std::memory_order_acq_rel);
+                        auto num = self_entry->op_count.fetch_sub(1, std::memory_order_acq_rel);
+                        if(num==0)[[unlikely]]{
+                            throw LazyUpdateException();
+                        }
                     }
                 }
                 current_offset = current_delta->previous_offset;
@@ -2402,6 +2419,9 @@ bool RWTransaction::eager_commit() {
     if (!simple_validation())[[unlikely]] {
         //std::cout<<"failed validation"<<std::endl;
         eager_abort();
+        if(op_count<0){
+            throw LazyUpdateException();
+        }
         txn_tables.abort_txn(self_entry,
                              op_count);//no need to cache the touched blocks of aborted txns due to eager abort
         batch_lazy_updates();
@@ -2461,6 +2481,9 @@ void RWTransaction::abort() {
     batch_lazy_updates();
     //eager abort no need to cache
     eager_abort();
+    if(op_count<0){
+        throw LazyUpdateException();
+    }
     txn_tables.abort_txn(self_entry, op_count);//no need to cache the touched blocks of aborted txns due to eager abort
 #if TRACK_EXECUTION_TIME
     auto stop = std::chrono::high_resolution_clock::now();

@@ -55,7 +55,12 @@ namespace bwgraph {
         }
         //we do not eagerly delete entries, just check if the next entry has op_count == 0.
         inline bool reduce_op_count(int64_t num) {
-            if (op_count.fetch_sub(num,std::memory_order_acq_rel) == num) {
+            auto result = op_count.fetch_sub(num,std::memory_order_acq_rel);
+            if(result ==0 && num ==1){
+                throw std::runtime_error("lazy update error");
+            }
+            if(result == num){
+            //if (op_count.fetch_sub(num,std::memory_order_acq_rel) == num) {
                 return true;
             }
 #if TXN_TABLE_TEST
@@ -423,7 +428,7 @@ namespace bwgraph {
             return tables[thread_id].get_status(txn_id,status_result);
         }
         inline void reduce_op_count(uint64_t txn_id,int64_t op_count){
-            if(!(txn_id&TS_ID_MASK)){
+            if(!(txn_id&TS_ID_MASK))[[unlikely]]{
                 throw LazyUpdateException();
             }
             uint8_t thread_id = bwgraph::get_threadID(txn_id);

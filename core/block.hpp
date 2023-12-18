@@ -31,7 +31,7 @@ namespace bwgraph {
 #define MAX_LOCK_INHERITANCE_ROUND 3
 #define ERROR_ENTRY_OFFSET 0xFFFFFFFF
 
-#define EDGE_DELTA_TEST false
+#define EDGE_DELTA_TEST true
 #define Count_Lazy_Protocol true
 #define PESSIMISTIC_DELTA_BLOCK true
 
@@ -890,9 +890,9 @@ namespace bwgraph {
                     auto target_delta = get_edge_delta(offset);
 #if EDGE_DELTA_TEST
                     uint64_t current_invalidate_ts = target_delta->invalidate_ts.load(std::memory_order_acquire);
-                if(!is_txn_id(current_invalidate_ts)&&current_invalidate_ts!=invalidate_ts){
+               /* if(!is_txn_id(current_invalidate_ts)&&current_invalidate_ts!=invalidate_ts){
                     throw std::runtime_error("error, update invalidation ts of a already previous version");
-                }
+                }*/
                 if(target_delta->toID!=target_vid){
                     throw std::runtime_error("error, the previous version is not actually a previous versiom");
                 }
@@ -902,13 +902,14 @@ namespace bwgraph {
                     auto target_delta = get_light_edge_delta(offset);
 #if EDGE_DELTA_TEST
                     uint64_t current_invalidate_ts = target_delta->invalidate_ts.load(std::memory_order_acquire);
-                if(!is_txn_id(current_invalidate_ts)&&current_invalidate_ts!=invalidate_ts){
+               /* if(!is_txn_id(current_invalidate_ts)&&current_invalidate_ts!=invalidate_ts){
                     throw std::runtime_error("error, update invalidation ts of a already previous version");
-                }
+                }*/
                 if(target_delta->toID!=target_vid){
                     throw std::runtime_error("error, the previous version is not actually a previous versiom");
                 }
 #endif
+                    std::cout<<invalidate_ts<<std::endl;
                     target_delta->invalidate_ts.store(invalidate_ts, std::memory_order_release);
                 }
             }
@@ -1651,9 +1652,9 @@ namespace bwgraph {
                 if(start_offset>normal_end_offset)[[likely]]{
                     current_delta = get_edge_delta(start_offset);
                 }
-                if(latest_version_start_offset)[[likely]]{
+                /*if(latest_version_start_offset)[[likely]]{
                     current_light_delta = get_light_edge_delta(latest_version_start_offset);
-                }
+                }*/
 /*#if USING_PREFETCH
                 auto num = start_offset / ENTRY_DELTA_SIZE;
                 for (uint32_t i = 0; i < num; i++) {
@@ -1667,7 +1668,7 @@ namespace bwgraph {
                     if (original_ts)[[likely]] {
                         //skip lazy update
                         //now current ts is either myself or a valid ts
-#if EDGE_DELTA_TEST
+/*#if EDGE_DELTA_TEST
                         if(is_txn_id(current_delta->creation_ts.load(std::memory_order_acquire))){
                             if(current_delta->creation_ts.load(std::memory_order_acquire)!=txn_id){
                                 throw LazyUpdateException();
@@ -1676,10 +1677,16 @@ namespace bwgraph {
                         if(current_delta->creation_ts.load(std::memory_order_acquire)==ABORT){
                             throw LazyUpdateException();
                         }
-#endif
+#endif*/
                         if (current_delta->toID == vid) {
                             current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                             if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+#if EDGE_DELTA_TEST
+                                auto to_check = get_edge_delta(start_offset);
+                                if(to_check->toID!=vid){
+                                    throw std::runtime_error("previous version search error");
+                                }
+#endif
                                 return start_offset;
                             } else {
                                 return 0;//for delete delta, just return 0 as if no previous version exist
@@ -1690,12 +1697,19 @@ namespace bwgraph {
                     current_delta++;
                 }
                 //skip the padding, if normal end != latest version start
-                if(normal_end_offset !=latest_version_start_offset){
+                if(normal_end_offset !=latest_version_start_offset && start_offset == normal_end_offset){
                     start_offset -= LIGHT_DELTA_SIZE;
                 }
+                current_light_delta = get_light_edge_delta(start_offset);
                 while (start_offset) {
                     if(current_light_delta->toID == vid){
                         current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+#if EDGE_DELTA_TEST
+                        auto to_check = get_light_edge_delta(start_offset);
+                        if(to_check->toID!=vid){
+                            throw std::runtime_error("previous version search error");
+                        }
+#endif
                         return start_offset;
                     }
                     start_offset-=LIGHT_DELTA_SIZE;
@@ -1712,14 +1726,15 @@ namespace bwgraph {
                     //uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                     //skip lazy update
 
-#if EDGE_DELTA_TEST
-                    else if(original_ts == ABORT){
-                        throw EagerAbortException();//should not meet aborted delta in the chain
-                    }
-#endif
                     if (current_delta->toID == vid)[[unlikely]] {
                         current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                         if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+#if EDGE_DELTA_TEST
+                            auto to_check = get_edge_delta(start_offset);
+                            if(to_check->toID!=vid){
+                                throw std::runtime_error("previous version search error");
+                            }
+#endif
                             return start_offset;
                         } else {
                             return 0;//for delete delta, just return 0 as if no previous version exist
@@ -1736,8 +1751,14 @@ namespace bwgraph {
                 if(start_offset<=LIGHT_DELTA_SIZE*10){
                     auto current_light_delta = get_light_edge_delta(start_offset);
                     while(start_offset>0){
-                        if(current_light_delta->toID==vid)[[unlikely]]{
+                        if(current_light_delta->toID==vid){
                             current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
+#if EDGE_DELTA_TEST
+                            auto to_check = get_light_edge_delta(start_offset);
+                            if(to_check->toID!=vid){
+                                throw std::runtime_error("previous version search error");
+                            }
+#endif
                             return start_offset;
                         }
                         current_light_delta++;
@@ -1765,7 +1786,13 @@ namespace bwgraph {
                         if(light_deltas_array[mid].toID==vid){
                             //found
                             light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
-                            return (latest_version_start_offset-mid*LIGHT_DELTA_SIZE);
+#if EDGE_DELTA_TEST
+                            auto to_check = get_light_edge_delta((latest_version_start_offset - static_cast<uint32_t>(mid * LIGHT_DELTA_SIZE)));
+                            if(light_deltas_array[mid].toID!=to_check->toID){
+                                throw std::runtime_error("binary search wrong");
+                            }
+#endif
+                            return (latest_version_start_offset - static_cast<uint32_t>(mid * LIGHT_DELTA_SIZE));
                         }
                         else if(light_deltas_array[mid].toID<vid){
                             //initial_left= left;
