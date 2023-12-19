@@ -1325,7 +1325,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
     /*size_t new_block_size = calculate_nw_block_size_from_lifespan(data_size,lifespan,20);
     auto new_order = size_to_order(new_block_size);*/
     //todo:: best approach to calculate new size?
-    auto new_order = calculate_new_fit_order(data_size + sizeof(EdgeDeltaBlockHeader)) + 1;
+    auto new_order = calculate_new_fit_order(data_size + sizeof(EdgeDeltaBlockHeader)) ;
     /* if(static_cast<uint32_t>(current_block->get_order())>20){
        */
     auto new_block_ptr = block_manager.alloc(new_order);

@@ -31,7 +31,7 @@ namespace bwgraph {
 #define MAX_LOCK_INHERITANCE_ROUND 3
 #define ERROR_ENTRY_OFFSET 0xFFFFFFFF
 
-#define EDGE_DELTA_TEST true
+#define EDGE_DELTA_TEST false
 #define Count_Lazy_Protocol true
 #define PESSIMISTIC_DELTA_BLOCK true
 
@@ -275,8 +275,8 @@ namespace bwgraph {
             prev_pointer = input_prev_pointer;
             order = input_order;
             //define a function that determines how many delta chains it has:
-            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 1 -
-                                                                                                            DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
+            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 2 -
+                                                                                                            DEFAULT_EDGE_DELTA_BLOCK_ORDER)));
             txn_tables = txn_table_ptr;
             delta_chains_index = input_index_ptr;
         }
@@ -290,7 +290,7 @@ namespace bwgraph {
             prev_pointer = input_prev_pointer;
             order = input_order;
             //define a function that determines how many delta chains it has:
-            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 1 -
+            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 2 -
                                                                                                             DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
             txn_tables = txn_table_ptr;
             delta_chains_index = input_index_ptr;
@@ -909,7 +909,7 @@ namespace bwgraph {
                     throw std::runtime_error("error, the previous version is not actually a previous versiom");
                 }
 #endif
-                    std::cout<<invalidate_ts<<std::endl;
+                    //std::cout<<invalidate_ts<<std::endl;
                     target_delta->invalidate_ts.store(invalidate_ts, std::memory_order_release);
                 }
             }
