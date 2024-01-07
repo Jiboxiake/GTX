@@ -6,6 +6,7 @@
 #include "core/bwgraph_include.hpp"
 #include <omp.h>
 #include <charconv>
+#include"core/algorithm.hpp"
 
 using namespace bg;
 namespace impl = bwgraph;
@@ -18,6 +19,13 @@ Graph::Graph(std::string block_path, size_t _max_block_size, std::string wal_pat
     commit_manager_worker =std::thread(&Graph::commit_server_start, this);
 }
 
+bwgraph::BwGraph *Graph::get_graph() {
+    return graph.get();
+}
+
+PageRankHandler Graph::get_pagerank_handler(uint64_t num) {
+    return {std::make_unique<impl::PageRank>(graph.get(),num)};
+}
 vertex_t Graph::get_max_allocated_vid() {return graph->get_max_allocated_vid();}
 
 RWTransaction Graph::begin_read_write_transaction() {
@@ -221,6 +229,7 @@ std::string_view SharedROTransaction::static_get_vertex(bg::vertex_t src) {
 std::string_view SharedROTransaction::static_get_edge(bg::vertex_t src, bg::vertex_t dst, bg::label_t label) {
     return txn->static_get_edge(src,dst,label);
 }
+
 
 StaticEdgeDeltaIterator SharedROTransaction::static_get_edges(bg::vertex_t src, bg::label_t label) {
     return std::make_unique<impl::StaticEdgeDeltaIterator>(txn->static_get_edges(src,label));
@@ -683,4 +692,20 @@ double HybridEdgeDeltaIterator::get_weight() {
 
 uint32_t HybridEdgeDeltaIterator::neighborhood_size() {
     return iterator->vertex_degree();
+}
+
+PageRankHandler::PageRankHandler(std::unique_ptr<bwgraph::PageRank> _handler):pagerank(std::move(_handler)) {}
+
+PageRankHandler::~PageRankHandler() = default;
+
+void PageRankHandler::compute(uint64_t num_iterations, double damping_factor) {
+    pagerank->compute_pagerank(num_iterations,damping_factor);
+}
+
+std::vector<double> *PageRankHandler::get_raw_result() {
+    return pagerank->get_raw_result();
+}
+
+std::vector<std::pair<uint64_t, double>> *PageRankHandler::get_result() {
+    return pagerank->get_result();
 }

@@ -208,7 +208,7 @@ namespace bwgraph {
             if (txn_read_ts >= current_delta_block->get_creation_time()) {
                 read_current_block = true;
                 latest_version_start_offset = current_delta_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
-                normal_end_offset = current_delta_block->is_padded()*LIGHT_DELTA_SIZE+ latest_version_start_offset;
+                normal_end_offset = current_delta_block->calculate_padding_size()+ latest_version_start_offset;
                 if(current_delta_offset>normal_end_offset)[[likely]]{
                     current_delta = current_delta_block->get_edge_delta(current_delta_offset);
                 }
@@ -235,7 +235,7 @@ namespace bwgraph {
                     auto previous_block_offset = current_delta_block->get_current_offset();
                     current_delta_offset = static_cast<uint32_t>(previous_block_offset & SIZE2MASK);
                     latest_version_start_offset = current_delta_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
-                    normal_end_offset = current_delta_block->is_padded()*LIGHT_DELTA_SIZE+ latest_version_start_offset;
+                    normal_end_offset = current_delta_block->calculate_padding_size()+ latest_version_start_offset;
                     if(current_delta_offset>normal_end_offset)[[likely]]{
                         current_delta = current_delta_block->get_edge_delta(current_delta_offset);
                     }
@@ -271,7 +271,7 @@ namespace bwgraph {
             if (txn_read_ts >= current_delta_block->get_creation_time()) {
                 read_current_block = true;
                 latest_version_start_offset = current_delta_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
-                normal_end_offset = current_delta_block->is_padded()*LIGHT_DELTA_SIZE+ latest_version_start_offset;
+                normal_end_offset = current_delta_block->calculate_padding_size()+ latest_version_start_offset;
                 if(current_delta_offset>normal_end_offset)[[likely]]{
                     current_delta = current_delta_block->get_edge_delta(current_delta_offset);
                 }
@@ -298,7 +298,7 @@ namespace bwgraph {
                     auto previous_block_offset = current_delta_block->get_current_offset();
                     current_delta_offset = static_cast<uint32_t>(previous_block_offset & SIZE2MASK);
                     latest_version_start_offset = current_delta_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
-                    normal_end_offset = current_delta_block->is_padded()*LIGHT_DELTA_SIZE+ latest_version_start_offset;
+                    normal_end_offset = current_delta_block->calculate_padding_size()+ latest_version_start_offset;
                     if(current_delta_offset>normal_end_offset)[[likely]]{
                         current_delta = current_delta_block->get_edge_delta(current_delta_offset);
                     }
@@ -526,11 +526,6 @@ namespace bwgraph {
                         current_delta++;
                         continue;
                     }
-#if EDGE_DELTA_TEST
-                    if(!original_ts){
-                        throw LazyUpdateException();
-                    }
-#endif
                     //only prefetch is current delta is not in progress
                     if (is_txn_id(original_ts)/*&&original_ts!=txn_id*/) {
                         uint64_t status = 0;
@@ -555,7 +550,8 @@ namespace bwgraph {
                                         }
 #endif
                                         //record lazy update
-                                        record_lazy_update_record(txn_lazy_update_records, original_ts);
+                                        //record_lazy_update_record(txn_lazy_update_records, original_ts);
+                                        txn_tables->reduce_op_count(original_ts,1);
                                     }
                                 }
 #if EDGE_DELTA_TEST
@@ -642,7 +638,7 @@ namespace bwgraph {
                 current_delta = nullptr;
                 return_result_delta = nullptr;
                 if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
-                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                    current_delta_offset = latest_version_start_offset;
                 }
                 while(current_delta_offset>0){
                     if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
@@ -702,7 +698,7 @@ namespace bwgraph {
                 current_delta = nullptr;
                 return_result_delta = nullptr;
                 if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
-                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                    current_delta_offset= latest_version_start_offset;
                 }
                 while(current_delta_offset>0){
                     if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
@@ -994,7 +990,8 @@ namespace bwgraph {
                                         }
 #endif
                                         //record lazy update
-                                        record_lazy_update_record(txn_lazy_update_records, original_ts);
+                                        txn_tables->reduce_op_count(original_ts,1);
+                                        //record_lazy_update_record(txn_lazy_update_records, original_ts);
                                     }
                                 }
 #if EDGE_DELTA_TEST
@@ -1085,7 +1082,7 @@ namespace bwgraph {
                 //current_delta = nullptr;
                 //return_result_delta = nullptr;
                 if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
-                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                    current_delta_offset=latest_version_start_offset;
                 }
                 while(current_delta_offset>0){
                     if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){
@@ -1149,7 +1146,7 @@ namespace bwgraph {
                 current_delta = nullptr;
                 return_result_delta = nullptr;
                 if(current_delta_offset==normal_end_offset&&current_delta_offset!=latest_version_start_offset){
-                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                    current_delta_offset=latest_version_start_offset;
                 }
                 while(current_delta_offset>0){
                     if(current_light_delta->creation_ts<=txn_read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_acquire)>txn_read_ts||current_light_delta->invalidate_ts.load(std::memory_order_acquire)==0)){

@@ -432,6 +432,11 @@ namespace bwgraph{
         //std::pair<Txn_Operation_Response,EarlyStopEdgeDeltaIterator> early_stop_get_edges(vertex_t src, label_t label,uint8_t thread_id);
         std::string_view get_vertex(vertex_t src);
         std::string_view get_vertex(vertex_t src, uint8_t thread_id);
+        uint64_t neighborhood_size(uint64_t vid, label_t label, uint8_t thread_id);
+        EdgeDeltaBlockHeader* get_block_header(uint64_t vid, label_t label, uint8_t thread_id, uint32_t* current_delta_offset);
+        inline void unregister_thread_block_access(uint8_t thread_id){
+            BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+        }
         //uint64_t vertex_degree(vertex_t src, label_t label, std::unique_ptr<SimpleEdgeDeltaIterator>& edge_iterator);
         inline void commit(){
            /* batch_lazy_updates();
@@ -448,7 +453,7 @@ namespace bwgraph{
         inline void on_operation_finish(){
             per_thread_op_count.local()++;
             if(per_thread_op_count.local()==shared_txn_op_threshold){
-                batch_lazy_updates();
+                //batch_lazy_updates();
                 auto& local_garbage_queue = graph.get_per_thread_garbage_queue();
                 if(local_garbage_queue.get_queue().size())[[unlikely]]{
                     auto safe_ts = block_access_ts_table.calculate_safe_ts();
@@ -459,7 +464,7 @@ namespace bwgraph{
         }
         inline void on_operation_finish(uint8_t thread_id){
             per_thread_op_count.local()++;
-            if(per_thread_op_count.local()==shared_txn_op_threshold){
+            if(per_thread_op_count.local()==shared_txn_op_threshold)[[unlikely]]{
                 batch_lazy_updates();
                 auto& local_garbage_queue = graph.get_per_thread_garbage_queue(thread_id);
                 if(local_garbage_queue.get_queue().size())[[unlikely]]{

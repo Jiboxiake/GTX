@@ -11,6 +11,7 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 namespace  bwgraph{
     class BwGraph;
     class RWTransaction;
@@ -22,6 +23,7 @@ namespace  bwgraph{
     class SimpleEdgeDeltaIterator;
     class StaticEdgeDeltaIterator;
     class EdgeDeltaBlockHeader;
+    class PageRank;
 }
 namespace bg {
     using label_t = uint16_t;
@@ -39,6 +41,7 @@ namespace bg {
     class HybridEdgeDeltaIterator;
     //class SimpleObjectEdgeDeltaIterator;
     class StaticEdgeDeltaIterator;
+    class PageRankHandler;
     class Graph {
     public:
         Graph(std::string block_path = "",size_t _max_block_size = 1ul << 40,
@@ -73,6 +76,8 @@ namespace bg {
         void print_and_clear_txn_stats();
         //for debug
         bwgraph::EdgeDeltaBlockHeader* get_edge_block(vertex_t vid, label_t l);
+        bwgraph::BwGraph* get_graph();
+        PageRankHandler get_pagerank_handler(uint64_t num);
         void print_thread_id_allocation();
     private:
         const std::unique_ptr<bwgraph::BwGraph> graph;
@@ -227,6 +232,17 @@ namespace bg {
         double get_weight();
         uint32_t neighborhood_size();
         std::unique_ptr<bwgraph::SimpleEdgeDeltaIterator> iterator;
+    };
+
+    class PageRankHandler{
+    public:
+        PageRankHandler(std::unique_ptr<bwgraph::PageRank> _handler);
+        ~PageRankHandler();
+        void compute(uint64_t num_iterations, double damping_factor);
+        std::vector<double>* get_raw_result();
+        std::vector<std::pair<uint64_t,double>>* get_result();
+    private:
+        std::unique_ptr<bwgraph::PageRank> pagerank;
     };
    /* class SimpleObjectEdgeDeltaIterator{
         SimpleObjectEdgeDeltaIterator();

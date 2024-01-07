@@ -22,7 +22,7 @@
 namespace bwgraph {
 #define LAZY_LOCKING false
 #define ENTRY_DELTA_SIZE 64
-#define LIGHT_DELTA_SIZE 32
+#define LIGHT_DELTA_SIZE 40
 #define SIZE2MASK 0x00000000FFFFFFFF
 #define LOCK_MASK 0x80000000
 #define UNLOCK_MASK 0x7FFFFFFF
@@ -31,7 +31,7 @@ namespace bwgraph {
 #define MAX_LOCK_INHERITANCE_ROUND 3
 #define ERROR_ENTRY_OFFSET 0xFFFFFFFF
 
-#define EDGE_DELTA_TEST false
+#define EDGE_DELTA_TEST true
 #define Count_Lazy_Protocol true
 #define PESSIMISTIC_DELTA_BLOCK true
 
@@ -108,7 +108,7 @@ namespace bwgraph {
         std::atomic_uint32_t offset;
     };
     /*
-     * 32 bytes light edge delta
+     * 32+8 bytes light edge delta
      */
     class LightEdgeDelta{
     public:
@@ -132,7 +132,9 @@ namespace bwgraph {
         std::atomic_uint64_t invalidate_ts;//todo: think a bit more about whether it needs to be atomic
         uint32_t data_length;
         uint32_t data_offset;
+        uint32_t previous_offset;
     };
+    static_assert(sizeof(LightEdgeDelta)==40);
     class /*alignas(64)*/ BaseEdgeDelta {
     public:
         BaseEdgeDelta &operator=(const BaseEdgeDelta &other) {
@@ -275,8 +277,8 @@ namespace bwgraph {
             prev_pointer = input_prev_pointer;
             order = input_order;
             //define a function that determines how many delta chains it has:
-            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 2 -
-                                                                                                            DEFAULT_EDGE_DELTA_BLOCK_ORDER)));
+            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 1 -
+                                                                                                            DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
             txn_tables = txn_table_ptr;
             delta_chains_index = input_index_ptr;
         }
@@ -290,7 +292,7 @@ namespace bwgraph {
             prev_pointer = input_prev_pointer;
             order = input_order;
             //define a function that determines how many delta chains it has:
-            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 2 -
+            delta_chain_num = static_cast<int32_t>(1ul << ((order == DEFAULT_EDGE_DELTA_BLOCK_ORDER) ? 1 : (order + 1 -
                                                                                                             DEFAULT_EDGE_DELTA_BLOCK_ORDER)));//index takes less than 1% in storage
             txn_tables = txn_table_ptr;
             delta_chains_index = input_index_ptr;
@@ -1085,8 +1087,21 @@ namespace bwgraph {
                 return Delta_Chain_Lock_Response::CONFLICT;
             }
         }
+        //redo the padding
         inline void create_light_delta_padding(){
-            allocate_space_for_latest_version_delta(0);
+            //allocate_space_for_latest_version_delta(0);
+            auto light_delta_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;
+            uint32_t to_allocate_size = (1+(light_delta_offset/64))*64 - light_delta_offset;
+            uint64_t to_atomic = ((static_cast<uint64_t>(0)) << 32) + to_allocate_size;
+            combined_offsets.fetch_add(to_atomic, std::memory_order_relaxed);
+        }
+        inline uint32_t calculate_padding_size(){
+            auto light_delta_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;
+            if((light_delta_offset%64)==0){
+                return 0;
+            }else{
+                return ((light_delta_offset/64)+1)*64 - light_delta_offset;
+            }
         }
         /*
          * this function assumes simpler locking protocol: when a transaction validates its delta chain, it also releases the lock.
@@ -1202,7 +1217,7 @@ namespace bwgraph {
             //unlocked and has offset
             if (latest_delta_chain_head_offset) {
                 //if the index points to a normal delta, check it
-                if(latest_delta_chain_head_offset>32*latest_version_entries_num){
+                if(latest_delta_chain_head_offset>LIGHT_DELTA_SIZE*latest_version_entries_num){
                     auto current_head_delta = get_edge_delta(latest_delta_chain_head_offset);
                     auto current_head_ts = current_head_delta->creation_ts.load(std::memory_order_acquire);
                     if (is_txn_id(current_head_ts)) {
@@ -1644,7 +1659,7 @@ namespace bwgraph {
         uint32_t fetch_previous_version_offset_simple(vertex_t vid, uint32_t start_offset, uint64_t txn_id){
             //calculate the boundary
             uint32_t latest_version_start_offset = latest_version_entries_num*LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
-            uint32_t normal_end_offset = latest_version_start_offset + padded*LIGHT_DELTA_SIZE;
+            uint32_t normal_end_offset = latest_version_start_offset + calculate_padding_size();
             if (order < index_lookup_order_threshold) {
                 //auto current_delta = get_edge_delta(start_offset);
                 BaseEdgeDelta* current_delta;
@@ -1698,7 +1713,7 @@ namespace bwgraph {
                 }
                 //skip the padding, if normal end != latest version start
                 if(normal_end_offset !=latest_version_start_offset && start_offset == normal_end_offset){
-                    start_offset -= LIGHT_DELTA_SIZE;
+                    start_offset = latest_version_start_offset;
                 }
                 current_light_delta = get_light_edge_delta(start_offset);
                 while (start_offset) {
@@ -1726,7 +1741,7 @@ namespace bwgraph {
                     //uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                     //skip lazy update
 
-                    if (current_delta->toID == vid)[[unlikely]] {
+                    if (current_delta->toID == vid) {
                         current_delta->invalidate_ts.store(txn_id, std::memory_order_release);
                         if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
 #if EDGE_DELTA_TEST
@@ -1747,64 +1762,14 @@ namespace bwgraph {
                          break;
                      }*/
                 }
-                //with start offset pointing to a light delta, let's try
-                if(start_offset<=LIGHT_DELTA_SIZE*10){
+                while(start_offset){
                     auto current_light_delta = get_light_edge_delta(start_offset);
-                    while(start_offset>0){
-                        if(current_light_delta->toID==vid){
-                            current_light_delta->invalidate_ts.store(txn_id, std::memory_order_release);
-#if EDGE_DELTA_TEST
-                            auto to_check = get_light_edge_delta(start_offset);
-                            if(to_check->toID!=vid){
-                                throw std::runtime_error("previous version search error");
-                            }
-#endif
-                            return start_offset;
-                        }
-                        current_light_delta++;
-                        start_offset -=LIGHT_DELTA_SIZE;
+                    if(current_light_delta->toID == vid){
+                        current_light_delta->invalidate_ts.store(txn_id,std::memory_order_release);
+                        return start_offset;
                     }
-                    return 0;
-                }else{
-                    //binary search
-                    /*if(latest_version_start_offset<start_offset){
-                        throw std::runtime_error("fetch previous version error");
-                    }*/
-                    auto* light_deltas_array = get_light_edge_delta(latest_version_start_offset);
-                    int32_t left = static_cast<int32_t>((latest_version_start_offset-start_offset)/LIGHT_DELTA_SIZE);
-                    int32_t right = static_cast<int32_t>(latest_version_start_offset/LIGHT_DELTA_SIZE - 1);
-                    //for debug
-                    //uint32_t initial_left = left;
-                    //uint32_t initial_right = right;
-                    while(left<=right){
-#if EDGE_DELTA_TEST
-                        if(left>latest_version_start_offset/LIGHT_DELTA_SIZE||right>latest_version_start_offset/LIGHT_DELTA_SIZE){
-                                throw std::runtime_error("fetch previous version error");
-                            }
-#endif
-                        int32_t mid = left + (right - left)/2;
-                        if(light_deltas_array[mid].toID==vid){
-                            //found
-                            light_deltas_array[mid].invalidate_ts.store(txn_id, std::memory_order_release);
-#if EDGE_DELTA_TEST
-                            auto to_check = get_light_edge_delta((latest_version_start_offset - static_cast<uint32_t>(mid * LIGHT_DELTA_SIZE)));
-                            if(light_deltas_array[mid].toID!=to_check->toID){
-                                throw std::runtime_error("binary search wrong");
-                            }
-#endif
-                            return (latest_version_start_offset - static_cast<uint32_t>(mid * LIGHT_DELTA_SIZE));
-                        }
-                        else if(light_deltas_array[mid].toID<vid){
-                            //initial_left= left;
-                            left = mid+1;
-                        }else{
-                            //initial_right = right;
-                            right = mid -1;
-                        }
-                    }
-                    return 0;
+                    start_offset = current_light_delta->previous_offset;
                 }
-
                 return 0;
             }
         }
@@ -2052,7 +2017,7 @@ namespace bwgraph {
             return {EdgeDeltaInstallResult::SUCCESS, newEntryOffset};
         }
         std::pair<EdgeDeltaInstallResult, uint32_t> checked_append_latest_version_delta(vertex_t toID, timestamp_t creation_ts, const char *edge_data,
-                                                                                        uint32_t data_size){
+                                                                                        uint32_t data_size,uint32_t previous_offset){
             uint32_t size = get_size();
             uint64_t originalOffset = 0;
             originalOffset = allocate_space_for_latest_version_delta(data_size);
@@ -2082,6 +2047,7 @@ namespace bwgraph {
             current_delta->creation_ts = creation_ts;
             current_delta->data_offset = originalDataOffset;
             current_delta->data_length = data_size;
+            current_delta->previous_offset = previous_offset;
             for (uint32_t i = 0; i < data_size; i++) {
                 (get_edge_data(originalDataOffset))[i] = edge_data[i];
             }

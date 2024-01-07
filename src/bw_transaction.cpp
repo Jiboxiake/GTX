@@ -1169,7 +1169,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
 #endif
     current_block->set_offset(to_restore_offset);
     BlockStateVersionProtectionScheme::install_shared_state(EdgeDeltaBlockState::CONSOLIDATION, current_label_entry);
-    std::map<vertex_t, uint32_t> latest_version_offsets;//hybrid storage: store offsets so we can accommodate both regular and light
+    std::unordered_map<vertex_t, uint32_t> latest_version_offsets;//hybrid storage: store offsets so we can accommodate both regular and light
     //std::unordered_set<vertex_t> edge_latest_versions_records;//hybrid storage: now this needs to be sorted
     //std::vector<uint32_t> edge_latest_version_offsets;
     BaseEdgeDelta *current_delta = current_block->get_edge_delta(
@@ -1177,7 +1177,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
     LightEdgeDelta *current_light_edge_delta;
     uint32_t latest_version_start_offset = current_block->latest_version_delta_num() *
                                            LIGHT_DELTA_SIZE;//how far from the right border is the first light entry
-    uint32_t normal_end_offset = latest_version_start_offset + current_block->is_padded() * LIGHT_DELTA_SIZE;
+    uint32_t normal_end_offset = latest_version_start_offset + current_block->calculate_padding_size();
     if (latest_version_start_offset) {
         current_light_edge_delta = current_block->get_light_edge_delta(latest_version_start_offset);
     }
@@ -1194,7 +1194,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
         //edge case, skip the padding entry.
         if (original_delta_offset == normal_end_offset &&
             original_delta_offset != latest_version_start_offset) {
-            original_delta_offset -= LIGHT_DELTA_SIZE;
+            original_delta_offset = latest_version_start_offset;
             continue;
         }
         //process normal deltas
@@ -1314,7 +1314,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
     data_size = (data_size == 0) ? ENTRY_DELTA_SIZE : data_size;
     data_size += overflow_data_size + overflow_delta_size;
     bool insert_padding = false;
-    if (latest_version_offsets.size() % 2) {
+    if ((latest_version_num * LIGHT_DELTA_SIZE)%64!=0) {
         insert_padding = true;
         data_size += LIGHT_DELTA_SIZE;
     }
@@ -1336,8 +1336,8 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
     std::vector<AtomicDeltaOffset> new_delta_chains_index(new_block_delta_chain_num);
     new_block->set_latest_version_num(latest_version_num);
     //start installing latest version
-    for (auto latest_version_it = latest_version_offsets.rbegin();
-         latest_version_it != latest_version_offsets.rend(); latest_version_it++) {
+    for (auto latest_version_it = latest_version_offsets.begin();
+         latest_version_it != latest_version_offsets.end(); latest_version_it++) {
         if(latest_version_it->second==bad_offset){
             continue;
         }
@@ -1365,7 +1365,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
             //uint32_t new_block_delta_offset = new_delta_chains_index_entry.get_offset();//it cannot be locked
             auto consolidation_latest_version_append_result = new_block->checked_append_latest_version_delta(
                     current_delta->toID, current_delta->creation_ts.load(std::memory_order_relaxed), data,
-                    current_delta->data_length);
+                    current_delta->data_length,new_delta_chains_index_entry.delta_offset.load(std::memory_order_relaxed));
             if (consolidation_latest_version_append_result.first != EdgeDeltaInstallResult::SUCCESS ||
                 !consolidation_latest_version_append_result.second)[[unlikely]] {
                 throw ConsolidationException();
@@ -1387,7 +1387,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
             uint32_t new_block_delta_offset = new_delta_chains_index_entry.get_offset();//it cannot be locked
             auto consolidation_latest_version_append_result = new_block->checked_append_latest_version_delta(
                     current_light_edge_delta->toID, current_light_edge_delta->creation_ts, data,
-                    current_light_edge_delta->data_length);
+                    current_light_edge_delta->data_length,new_block_delta_offset);
             if (consolidation_latest_version_append_result.first != EdgeDeltaInstallResult::SUCCESS ||
                 !consolidation_latest_version_append_result.second)[[unlikely]] {
                 throw ConsolidationException();
@@ -1432,9 +1432,14 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
     while (true) {
         //no need to change? because they must be normal deltas
         for (auto it = to_check_delta_chains.begin(); it != to_check_delta_chains.end();) {
+            auto current_delta_chain_head_offset = current_label_entry->delta_chain_index->at(*it).get_raw_offset();
+            if(current_delta_chain_head_offset<=latest_version_start_offset){
+                it = to_check_delta_chains.erase(it);
+                continue;
+            }
             //get the delta chain head of this delta chain in the original block, check if a validation is happening
             current_delta = current_block->get_edge_delta(
-                    current_label_entry->delta_chain_index->at(*it).get_raw_offset());
+                    current_delta_chain_head_offset);
             uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
             if (is_txn_id(original_ts)) {
                 uint64_t status = 0;
@@ -1446,14 +1451,14 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
                     } else if (status ==
                                ABORT) { //validating txn aborted, so consolidating thread will help with lazy update, its deltas in the current block is all or nothing (eager aborted)
                         uint32_t to_abort_offset = current_delta->previous_offset;
-                        if (!current_delta->lazy_update(original_ts, status)) {
+                        if (!current_delta->lazy_update(original_ts, status))[[unlikely]] {
                             throw ConsolidationException();//we should never fail lazy update during an exclusive state
                         }
                         auto abort_lazy_update_emplace_result = lazy_update_records.try_emplace(original_ts, 1);
                         if (!abort_lazy_update_emplace_result.second) {
                             abort_lazy_update_emplace_result.first->second++;
                         }
-                        while (to_abort_offset != 0) {
+                        while (to_abort_offset >normal_end_offset) {
                             current_delta = current_block->get_edge_delta(to_abort_offset);
                             if (current_delta->creation_ts.load(std::memory_order_acquire) != original_ts) {
                                 break;
@@ -1481,7 +1486,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
                         if (!commit_lazy_update_emplace_result.second) {
                             commit_lazy_update_emplace_result.first->second++;
                         }
-                        while (to_commit_offset != 0) {
+                        while (to_commit_offset > normal_end_offset) {
                             current_delta = current_block->get_edge_delta(to_commit_offset);
                             if (current_delta->creation_ts.load(std::memory_order_acquire) != original_ts &&
                                 current_delta->creation_ts.load(std::memory_order_acquire) !=
@@ -1502,7 +1507,7 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
                         }
                         it = to_check_delta_chains.erase(it);
                     }
-                } else {
+                } else[[unlikely]] {
                     throw ConsolidationException();//Installation phase is supposed to be exclusive.
                 }
             } else {
@@ -1589,10 +1594,16 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
 
                     uint32_t previous_version_offset = 0;
                     if (new_delta_chains_index_entry.get_offset())
+#if USING_SIMPLE_FETCH_PREVIOUS_VERSION
+                        previous_version_offset = new_block->fetch_previous_version_offset_simple(current_delta->toID,
+                                                                                           new_delta_chains_index_entry.get_offset(),
+                                                                                           current_delta->creation_ts.load());
+#else
                         previous_version_offset = new_block->fetch_previous_version_offset(current_delta->toID,
                                                                                            new_delta_chains_index_entry.get_offset(),
                                                                                            current_delta->creation_ts.load(),
                                                                                            lazy_update_records);
+#endif
 #if EDGE_DELTA_TEST
                     if(!previous_version_offset){
                         throw std::runtime_error("error, under checked version, a delete delta must have a previous version");
@@ -1656,10 +1667,17 @@ void RWTransaction::checked_consolidation(bwgraph::BwLabelEntry *current_label_e
             //update or delete
             if (current_delta->delta_type != EdgeDeltaType::INSERT_DELTA) {
                 if (local_delta_chains_index_cache[delta_chain_id])
+#if USING_SIMPLE_FETCH_PREVIOUS_VERSION
+                    previous_version_offset = new_block->fetch_previous_version_offset_simple(current_delta->toID,
+                                                                                       local_delta_chains_index_cache[delta_chain_id],
+                                                                                       current_delta->creation_ts.load());
+#else
                     previous_version_offset = new_block->fetch_previous_version_offset(current_delta->toID,
                                                                                        local_delta_chains_index_cache[delta_chain_id],
                                                                                        current_delta->creation_ts.load(),
                                                                                        lazy_update_records);
+#endif
+
 #if EDGE_DELTA_TEST
                 if(!previous_version_offset){
                     throw std::runtime_error("error, under checked version, a delete or update delta must have a previous version");
@@ -3611,4 +3629,120 @@ std::string_view SharedROTransaction::scan_previous_block_find_edge(bwgraph::Edg
     return std::string_view();
 }
 
+uint64_t SharedROTransaction::neighborhood_size(uint64_t vid, bwgraph::label_t label, uint8_t thread_id) {
+    BwLabelEntry *target_label_entry = reader_access_label(vid, label);
+    if (!target_label_entry)[[unlikely]] {
+        on_operation_finish(thread_id);
+        return std::numeric_limits<uint64_t>::max();
+    }
+    auto block_id = generate_block_id(vid, label);
+    while(true){
+        if (BlockStateVersionProtectionScheme::reader_access_block(thread_id, block_id, target_label_entry,
+                                                                   block_access_ts_table))[[likely]] {
+            auto current_block = block_manager.convert<EdgeDeltaBlockHeader>(target_label_entry->block_ptr);
+            uint64_t current_combined_offset = current_block->get_current_offset();
+            if (current_block->is_overflow_offset(current_combined_offset))[[unlikely]] {
+                BlockStateVersionProtectionScheme::release_protection(thread_id, block_access_ts_table);
+                on_operation_finish(thread_id);
+                continue;
+            }
+            on_operation_finish(thread_id);
+            //compute the neighborhood size
+            uint32_t latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
+            uint32_t normal_end_offset = current_block->calculate_padding_size()+ latest_version_start_offset;
+            auto current_delta_offset = current_block->get_delta_offset_from_combined_offset(current_combined_offset);
+            auto current_delta = current_block->get_edge_delta(current_delta_offset);
+            uint64_t result = 0;
+            while(current_delta_offset>normal_end_offset){
+                timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                if(!original_ts)[[unlikely]]{
+                    current_delta_offset-=ENTRY_DELTA_SIZE;
+                    current_delta++;
+                    continue;
+                }
+                if(is_txn_id(original_ts)){
+                    uint64_t status = 0;
+                    if(txn_tables.get_status(original_ts,status))[[likely]]{
+                        if(status != IN_PROGRESS){
+                            if(status!=ABORT){
+                                current_block->update_previous_delta_invalidate_ts(current_delta->toID,
+                                                                                   current_delta->previous_version_offset,
+                                                                                   status);
+                                if (current_delta->lazy_update(original_ts, status)) {
+                                    //record lazy update
+                                    txn_tables.reduce_op_count(original_ts,1);
+                                }
+                            }
+#if EDGE_DELTA_TEST
+                            if(current_delta->creation_ts.load(std::memory_order_acquire)!=status){
+                                throw LazyUpdateException();
+                            }
+#endif
+                            original_ts = status;
+                        }else{
+                            current_delta_offset -= ENTRY_DELTA_SIZE;
+                            current_delta++;
+                            continue;
+                        }
+                    }else{
+                        original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    }
+                }
+                if(current_delta->delta_type!=EdgeDeltaType::DELETE_DELTA){
+                    timestamp_t invalidation_ts = current_delta->invalidate_ts.load(std::memory_order_acquire);
+                    if(original_ts<=read_timestamp){
+                        if(invalidation_ts==0||invalidation_ts>read_timestamp){
+                            result++;
+                        }
+                    }
+                }
+                current_delta_offset -= ENTRY_DELTA_SIZE;
+                current_delta++;
+            }
+#if EDGE_DELTA_TEST
+            if(current_delta_offset!=normal_end_offset){
+                throw std::runtime_error("error, neighborhood size corruption");
+            }
+#endif
+            if(normal_end_offset!=latest_version_start_offset){
+                current_delta_offset = latest_version_start_offset;
+            }
+            auto current_light_delta = current_block->get_light_edge_delta(current_delta_offset);
+            while(current_delta_offset>0){
+                timestamp_t i_time = current_light_delta->invalidate_ts.load(std::memory_order_acquire);
+                if(current_light_delta->creation_ts<=read_timestamp&&(i_time==0||i_time>read_timestamp)){
+                    result++;
+                }
+                current_delta_offset -= LIGHT_DELTA_SIZE;
+                current_light_delta++;
+            }
+            BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+            return result;
+        }
+    }
+    throw std::runtime_error("should never reach here");
+}
+
+EdgeDeltaBlockHeader *SharedROTransaction::get_block_header(uint64_t vid, bwgraph::label_t label, uint8_t thread_id,uint32_t* current_delta_offset) {
+    BwLabelEntry *target_label_entry = reader_access_label(vid, label);
+    if (!target_label_entry)[[unlikely]] {
+        on_operation_finish(thread_id);
+        return nullptr;
+    }
+    auto block_id = generate_block_id(vid, label);
+    while(true){
+        if (BlockStateVersionProtectionScheme::reader_access_block(thread_id, block_id, target_label_entry,
+                                                                   block_access_ts_table))[[likely]] {
+            auto current_block = block_manager.convert<EdgeDeltaBlockHeader>(target_label_entry->block_ptr);
+            auto current_combined_offset = current_block->get_current_offset();
+            if(!current_block->is_overflow_offset(current_combined_offset))[[likely]]{
+                *current_delta_offset = current_block->get_delta_offset_from_combined_offset(current_combined_offset);
+                return current_block;
+            }else{
+                BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+            }
+        }
+    }
+    throw std::runtime_error("should never reach here");
+}
 #endif
