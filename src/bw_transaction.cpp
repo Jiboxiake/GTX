@@ -3636,88 +3636,146 @@ uint64_t SharedROTransaction::neighborhood_size(uint64_t vid, bwgraph::label_t l
         return std::numeric_limits<uint64_t>::max();
     }
     auto block_id = generate_block_id(vid, label);
+    uint64_t result = 0;
     while(true){
         if (BlockStateVersionProtectionScheme::reader_access_block(thread_id, block_id, target_label_entry,
                                                                    block_access_ts_table))[[likely]] {
             auto current_block = block_manager.convert<EdgeDeltaBlockHeader>(target_label_entry->block_ptr);
-            uint64_t current_combined_offset = current_block->get_current_offset();
-            if (current_block->is_overflow_offset(current_combined_offset))[[unlikely]] {
-                BlockStateVersionProtectionScheme::release_protection(thread_id, block_access_ts_table);
-                on_operation_finish(thread_id);
-                continue;
-            }
-            on_operation_finish(thread_id);
-            //compute the neighborhood size
-            uint32_t latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
-            uint32_t normal_end_offset = current_block->calculate_padding_size()+ latest_version_start_offset;
-            auto current_delta_offset = current_block->get_delta_offset_from_combined_offset(current_combined_offset);
-            auto current_delta = current_block->get_edge_delta(current_delta_offset);
-            uint64_t result = 0;
-            while(current_delta_offset>normal_end_offset){
-                timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
-                if(!original_ts)[[unlikely]]{
-                    current_delta_offset-=ENTRY_DELTA_SIZE;
-                    current_delta++;
+            if(current_block->get_creation_time()<= read_timestamp)[[likely]]{
+                uint64_t current_combined_offset = current_block->get_current_offset();
+                if (current_block->is_overflow_offset(current_combined_offset))[[unlikely]] {
+                    BlockStateVersionProtectionScheme::release_protection(thread_id, block_access_ts_table);
+                    on_operation_finish(thread_id);
                     continue;
                 }
-                if(is_txn_id(original_ts)){
-                    uint64_t status = 0;
-                    if(txn_tables.get_status(original_ts,status))[[likely]]{
-                        if(status != IN_PROGRESS){
-                            if(status!=ABORT){
-                                current_block->update_previous_delta_invalidate_ts(current_delta->toID,
-                                                                                   current_delta->previous_version_offset,
-                                                                                   status);
-                                if (current_delta->lazy_update(original_ts, status)) {
-                                    //record lazy update
-                                    txn_tables.reduce_op_count(original_ts,1);
+                on_operation_finish(thread_id);
+                //compute the neighborhood size
+                uint32_t latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
+                uint32_t normal_end_offset = current_block->calculate_padding_size()+ latest_version_start_offset;
+                auto current_delta_offset = current_block->get_delta_offset_from_combined_offset(current_combined_offset);
+                auto current_delta = current_block->get_edge_delta(current_delta_offset);
+
+                while(current_delta_offset>normal_end_offset){
+                    timestamp_t original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    if(!original_ts)[[unlikely]]{
+                        current_delta_offset-=ENTRY_DELTA_SIZE;
+                        current_delta++;
+                        continue;
+                    }
+                    if(is_txn_id(original_ts)){
+                        uint64_t status = 0;
+                        if(txn_tables.get_status(original_ts,status))[[likely]]{
+                            if(status != IN_PROGRESS){
+                                if(status!=ABORT){
+                                    current_block->update_previous_delta_invalidate_ts(current_delta->toID,
+                                                                                       current_delta->previous_version_offset,
+                                                                                       status);
+                                    if (current_delta->lazy_update(original_ts, status)) {
+                                        //record lazy update
+                                        txn_tables.reduce_op_count(original_ts,1);
+                                    }
                                 }
-                            }
 #if EDGE_DELTA_TEST
-                            if(current_delta->creation_ts.load(std::memory_order_acquire)!=status){
-                                throw LazyUpdateException();
-                            }
+                                if(current_delta->creation_ts.load(std::memory_order_acquire)!=status){
+                                    throw LazyUpdateException();
+                                }
 #endif
-                            original_ts = status;
+                                original_ts = status;
+                            }else{
+                                current_delta_offset -= ENTRY_DELTA_SIZE;
+                                current_delta++;
+                                continue;
+                            }
                         }else{
-                            current_delta_offset -= ENTRY_DELTA_SIZE;
-                            current_delta++;
-                            continue;
+                            original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
                         }
-                    }else{
-                        original_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                    }
+                    if(current_delta->delta_type!=EdgeDeltaType::DELETE_DELTA){
+                        timestamp_t invalidation_ts = current_delta->invalidate_ts.load(std::memory_order_acquire);
+                        if(original_ts<=read_timestamp){
+                            if(invalidation_ts==0||invalidation_ts>read_timestamp){
+                                result++;
+                            }
+                        }
+                    }
+                    current_delta_offset -= ENTRY_DELTA_SIZE;
+                    current_delta++;
+                }
+#if EDGE_DELTA_TEST
+                if(current_delta_offset!=normal_end_offset){
+                    throw std::runtime_error("error, neighborhood size corruption");
+                }
+#endif
+                //if(normal_end_offset!=latest_version_start_offset){
+                    current_delta_offset = latest_version_start_offset;
+                //}
+                auto current_light_delta = current_block->get_light_edge_delta(current_delta_offset);
+                while(current_delta_offset>0){
+                    timestamp_t i_time = current_light_delta->invalidate_ts.load(std::memory_order_acquire);
+                    if(current_light_delta->creation_ts<=read_timestamp&&(i_time==0||i_time>read_timestamp)){
+                        result++;
+                    }
+                    current_delta_offset -= LIGHT_DELTA_SIZE;
+                    current_light_delta++;
+                }
+                BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
+                return result;
+            }else{
+                block_access_ts_table.release_block_access(thread_id);
+                bool found = false;
+                while (current_block->get_previous_ptr()) {
+                    current_block = block_manager.convert<EdgeDeltaBlockHeader>(
+                            current_block->get_previous_ptr());
+                    if (read_timestamp >= current_block->get_creation_time()) {
+                        found = true;
+                        break;
                     }
                 }
-                if(current_delta->delta_type!=EdgeDeltaType::DELETE_DELTA){
-                    timestamp_t invalidation_ts = current_delta->invalidate_ts.load(std::memory_order_acquire);
-                    if(original_ts<=read_timestamp){
-                        if(invalidation_ts==0||invalidation_ts>read_timestamp){
+                if(found)[[likely]]{
+                    auto previous_block_offset = current_block->get_current_offset();
+                    auto current_delta_offset = static_cast<uint32_t>(previous_block_offset & SIZE2MASK);
+                    auto latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
+                    auto normal_end_offset = current_block->calculate_padding_size()+ latest_version_start_offset;
+                    auto current_delta = current_block->get_edge_delta(current_delta_offset);
+                    LightEdgeDelta* current_light_delta;
+                    if(latest_version_start_offset)[[likely]]{
+                        current_light_delta = current_block->get_light_edge_delta(latest_version_start_offset);
+                    }
+                    while(current_delta_offset> normal_end_offset){
+                        if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+                            uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_relaxed);
+                            //uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                            uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(
+                                    std::memory_order_acquire);
+                            //for debug
+                            /*  if(!current_delta->toID){
+                                  std::cout<<"error, current block is cleared"<<std::endl;
+                                  current_delta->print_stats();
+                                  throw std::runtime_error("error bad");
+                              }*/
+                            //cannot be the delta deleted by the current transaction
+                            // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
+                            //visible committed delta
+                            if (original_ts <= read_timestamp && (current_invalidation_ts == 0 ||
+                                                           current_invalidation_ts >
+                                                           read_timestamp)) {
+                                result++;
+                            }
+                        }
+                        current_delta_offset -= ENTRY_DELTA_SIZE;
+                        current_delta++;
+                    }
+                    current_delta_offset = latest_version_start_offset;
+                    while(current_delta_offset>0){
+                        if(current_light_delta->creation_ts<=read_timestamp&&(current_light_delta->invalidate_ts.load(std::memory_order_relaxed)>read_timestamp||current_light_delta->invalidate_ts.load(std::memory_order_relaxed)==0)){
                             result++;
                         }
+                        current_delta_offset-=LIGHT_DELTA_SIZE;
+                        current_light_delta++;
                     }
                 }
-                current_delta_offset -= ENTRY_DELTA_SIZE;
-                current_delta++;
+                return result;
             }
-#if EDGE_DELTA_TEST
-            if(current_delta_offset!=normal_end_offset){
-                throw std::runtime_error("error, neighborhood size corruption");
-            }
-#endif
-            if(normal_end_offset!=latest_version_start_offset){
-                current_delta_offset = latest_version_start_offset;
-            }
-            auto current_light_delta = current_block->get_light_edge_delta(current_delta_offset);
-            while(current_delta_offset>0){
-                timestamp_t i_time = current_light_delta->invalidate_ts.load(std::memory_order_acquire);
-                if(current_light_delta->creation_ts<=read_timestamp&&(i_time==0||i_time>read_timestamp)){
-                    result++;
-                }
-                current_delta_offset -= LIGHT_DELTA_SIZE;
-                current_light_delta++;
-            }
-            BlockStateVersionProtectionScheme::release_protection(thread_id,block_access_ts_table);
-            return result;
         }
     }
     throw std::runtime_error("should never reach here");

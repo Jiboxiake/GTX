@@ -135,12 +135,13 @@ namespace bwgraph{
                             }
 #if EDGE_DELTA_TEST
                             if(normal_end_offset!=current_delta_offset){
+                                std::cout<<normal_end_offset<<" "<<current_delta_offset<<std::endl;
                                 throw std::runtime_error("error, scan corruption");
                             }
 #endif
-                            if(normal_end_offset!=latest_version_start_offset)[[likely]]{
+                            //if(normal_end_offset!=latest_version_start_offset)[[likely]]{
                                 current_delta_offset = latest_version_start_offset;
-                            }
+                            //}
                             while(current_delta_offset>0){
                                 auto current_invalidation_ts = current_light_delta->invalidate_ts.load(std::memory_order_acquire);
                                 if(current_light_delta->creation_ts<=read_ts&&(current_invalidation_ts>read_ts||current_invalidation_ts==0)){
@@ -150,7 +151,7 @@ namespace bwgraph{
                                 current_delta_offset-=LIGHT_DELTA_SIZE;
                             }
                         }else{//read previous block, not happening in static setting
-                            throw std::runtime_error("error, should not reach here");
+                            //throw std::runtime_error("error, should not reach here");
                             txn.unregister_thread_block_access(thread_id);
                             bool found = false;
                             while (current_block->get_previous_ptr()) {
@@ -162,7 +163,47 @@ namespace bwgraph{
                                 }
                             }
                             if(found)[[likely]]{
-
+                                auto previous_block_offset = current_block->get_current_offset();
+                                current_delta_offset = static_cast<uint32_t>(previous_block_offset & SIZE2MASK);
+                                auto latest_version_start_offset = current_block->latest_version_delta_num()*LIGHT_DELTA_SIZE;
+                                auto normal_end_offset = current_block->calculate_padding_size()+ latest_version_start_offset;
+                                auto current_delta = current_block->get_edge_delta(current_delta_offset);
+                                LightEdgeDelta* current_light_delta;
+                                if(latest_version_start_offset)[[likely]]{
+                                    current_light_delta = current_block->get_light_edge_delta(latest_version_start_offset);
+                                }
+                                while(current_delta_offset> normal_end_offset){
+                                    if (current_delta->delta_type != EdgeDeltaType::DELETE_DELTA) {
+                                        uint64_t original_ts = current_delta->creation_ts.load(std::memory_order_relaxed);
+                                        //uint64_t current_creation_ts = current_delta->creation_ts.load(std::memory_order_acquire);
+                                        uint64_t current_invalidation_ts = current_delta->invalidate_ts.load(
+                                                std::memory_order_acquire);
+                                        //for debug
+                                        /*  if(!current_delta->toID){
+                                              std::cout<<"error, current block is cleared"<<std::endl;
+                                              current_delta->print_stats();
+                                              throw std::runtime_error("error bad");
+                                          }*/
+                                        //cannot be the delta deleted by the current transaction
+                                        // if(current_invalidation_ts!=txn_id)[[likely]]{//txn_id
+                                        //visible committed delta
+                                        if (original_ts <= read_ts && (current_invalidation_ts == 0 ||
+                                                                           current_invalidation_ts >
+                                                                           read_ts)) {
+                                            incoming_total += outgoing_contrib[current_delta->toID-1];
+                                        }
+                                    }
+                                    current_delta_offset -= ENTRY_DELTA_SIZE;
+                                    current_delta++;
+                                }
+                                current_delta_offset = latest_version_start_offset;
+                                while(current_delta_offset>0){
+                                    if(current_light_delta->creation_ts<=read_ts&&(current_light_delta->invalidate_ts.load(std::memory_order_relaxed)>read_ts||current_light_delta->invalidate_ts.load(std::memory_order_relaxed)==0)){
+                                        incoming_total += outgoing_contrib[current_light_delta->toID-1];
+                                    }
+                                    current_delta_offset-=LIGHT_DELTA_SIZE;
+                                    current_light_delta++;
+                                }
                             }
                         }
                         scores[v-1] = base_score + damping_factor * (incoming_total + dangling_sum);
